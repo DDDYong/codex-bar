@@ -24,7 +24,7 @@ static POLLING: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {
-    use super::tray_title;
+    use super::{status_light, tray_title};
 
     #[test]
     fn display_modes_never_put_session_light_in_the_title() {
@@ -33,6 +33,20 @@ mod tests {
             "week 68% · 周五 · 2次"
         );
         assert_eq!(tray_title(false, "week 68% · 周五 · 2次"), "");
+    }
+
+    #[test]
+    fn legacy_status_without_sessions_is_not_shown_as_completed() {
+        assert_eq!(
+            status_light(Some(&serde_json::json!({"state": "completed"}))),
+            "⚪"
+        );
+        assert_eq!(
+            status_light(Some(
+                &serde_json::json!({"state": "completed", "sessions": {}})
+            )),
+            "🟢"
+        );
     }
 }
 
@@ -78,24 +92,24 @@ fn tray_title(detailed: bool, summary: &str) -> String {
         String::new()
     }
 }
-fn light(_snapshot: Option<&ProviderSnapshot>, _refreshing: bool) -> &'static str {
-    let path = dirs::home_dir().map(|home| home.join(".codex-bar/session-status.json"));
-    let state = path
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|value| {
-            value
-                .get("state")
-                .and_then(|state| state.as_str())
-                .map(str::to_owned)
-        });
-    match state.as_deref() {
+fn status_light(value: Option<&serde_json::Value>) -> &'static str {
+    let Some(value) = value.filter(|value| value.get("sessions").is_some()) else {
+        return "⚪";
+    };
+    match value.get("state").and_then(|state| state.as_str()) {
         Some("running") => "🟡",
         Some("waiting") => "🟠",
         Some("completed") => "🟢",
         Some("failed") => "🔴",
         _ => "⚪",
     }
+}
+fn light(_snapshot: Option<&ProviderSnapshot>, _refreshing: bool) -> &'static str {
+    let path = dirs::home_dir().map(|home| home.join(".codex-bar/session-status.json"));
+    let state = path
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    status_light(state.as_ref())
 }
 fn badge_icon(status: &str) -> tauri::image::Image<'static> {
     let base = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
