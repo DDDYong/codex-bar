@@ -109,7 +109,9 @@ fn light(_snapshot: Option<&ProviderSnapshot>, _refreshing: bool) -> &'static st
     if let Some(status) = session::live_status() {
         return match status {
             "running" => "🟡",
+            "waiting" => "🟠",
             "completed" => "🟢",
+            "failed" => "🔴",
             _ => "⚪",
         };
     }

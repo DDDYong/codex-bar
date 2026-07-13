@@ -1,12 +1,17 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, SystemTime},
 };
 
 pub fn live_status() -> Option<&'static str> {
     let root = dirs::home_dir()?.join(".codex/sessions");
-    let path = newest_session_file(&root)?;
+    let mut statuses = Vec::new();
+    visit_sessions(&root, &mut statuses);
+    aggregate_status(&statuses)
+}
+
+fn session_status(path: &Path) -> Option<&'static str> {
     let modified = path.metadata().ok()?.modified().ok()?;
     if SystemTime::now().duration_since(modified).ok()? > Duration::from_secs(15 * 60) {
         return None;
@@ -19,47 +24,55 @@ pub fn live_status() -> Option<&'static str> {
         .copied()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .filter_map(|item| {
-            item.get("payload")?
-                .get("type")?
-                .as_str()
-                .map(str::to_owned)
+            let payload = item.get("payload")?;
+            let kind = payload.get("type")?.as_str()?;
+            if payload.get("name").and_then(|name| name.as_str()) == Some("request_user_input")
+                || matches!(
+                    kind,
+                    "permission_request" | "approval_request" | "request_user_input"
+                )
+            {
+                Some("waiting".into())
+            } else if matches!(kind, "error" | "failure" | "failed") {
+                Some("failed".into())
+            } else {
+                Some(kind.to_owned())
+            }
         })
         .collect();
     status_from_events(&events)
 }
 
-fn newest_session_file(root: &Path) -> Option<PathBuf> {
-    let mut newest = None;
-    visit_sessions(root, &mut newest);
-    newest.map(|(path, _)| path)
-}
-
-fn visit_sessions(directory: &Path, newest: &mut Option<(PathBuf, SystemTime)>) {
+fn visit_sessions(directory: &Path, statuses: &mut Vec<&'static str>) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            visit_sessions(&path, newest);
+            visit_sessions(&path, statuses);
         } else if path
             .extension()
             .is_some_and(|extension| extension == "jsonl")
         {
-            let Some(modified) = entry
-                .metadata()
-                .ok()
-                .and_then(|metadata| metadata.modified().ok())
-            else {
-                continue;
-            };
-            if newest
-                .as_ref()
-                .is_none_or(|(_, current)| modified > *current)
-            {
-                *newest = Some((path, modified));
+            if let Some(status) = session_status(&path) {
+                statuses.push(status);
             }
         }
+    }
+}
+
+pub fn aggregate_status(statuses: &[&str]) -> Option<&'static str> {
+    if statuses.iter().any(|status| *status == "running") {
+        Some("running")
+    } else if statuses.iter().any(|status| *status == "waiting") {
+        Some("waiting")
+    } else if statuses.iter().any(|status| *status == "failed") {
+        Some("failed")
+    } else if statuses.iter().any(|status| *status == "completed") {
+        Some("completed")
+    } else {
+        None
     }
 }
 
@@ -78,7 +91,7 @@ pub fn status_from_events(events: &[String]) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::status_from_events;
+    use super::{aggregate_status, status_from_events};
 
     #[test]
     fn task_complete_means_completed_but_recent_reasoning_means_running() {
@@ -90,5 +103,16 @@ mod tests {
             status_from_events(&["reasoning".into(), "custom_tool_call".into()]),
             Some("running")
         );
+    }
+
+    #[test]
+    fn any_running_session_wins_over_completed_sessions() {
+        assert_eq!(aggregate_status(&["completed", "running"]), Some("running"));
+    }
+
+    #[test]
+    fn waiting_and_failed_sessions_keep_their_distinct_states() {
+        assert_eq!(aggregate_status(&["completed", "waiting"]), Some("waiting"));
+        assert_eq!(aggregate_status(&["completed", "failed"]), Some("failed"));
     }
 }
