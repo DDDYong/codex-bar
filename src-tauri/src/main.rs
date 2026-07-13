@@ -18,22 +18,35 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 struct AppState {
     client: reqwest::Client,
     snapshot: Mutex<Option<ProviderSnapshot>>,
-    detailed: Mutex<bool>,
+    display_mode: Mutex<DisplayMode>,
     refreshing: Mutex<bool>,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum DisplayMode {
+    Detailed,
+    Compact,
+    IconOnly,
 }
 static POLLING: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
 mod tests {
-    use super::{status_light, tray_title};
+    use super::{status_light, tray_title, DisplayMode};
 
     #[test]
     fn display_modes_never_put_session_light_in_the_title() {
         assert_eq!(
-            tray_title(true, "week 68% · 周五 · 2次"),
+            tray_title(DisplayMode::Detailed, "week 68%", "week 68% · 周五 · 2次"),
             "week 68% · 周五 · 2次"
         );
-        assert_eq!(tray_title(false, "week 68% · 周五 · 2次"), "");
+        assert_eq!(
+            tray_title(DisplayMode::Compact, "week 68%", "week 68% · 周五 · 2次"),
+            "week 68%"
+        );
+        assert_eq!(
+            tray_title(DisplayMode::IconOnly, "week 68%", "week 68% · 周五 · 2次"),
+            ""
+        );
     }
 
     #[test]
@@ -86,11 +99,18 @@ fn summary(snapshot: Option<&ProviderSnapshot>) -> String {
         .unwrap_or_else(|| "--".into());
     format!("week {percent} · {reset} · {credits}")
 }
-fn tray_title(detailed: bool, summary: &str) -> String {
-    if detailed {
-        summary.into()
-    } else {
-        String::new()
+fn compact_summary(snapshot: Option<&ProviderSnapshot>) -> String {
+    summary(snapshot)
+        .split(" · ")
+        .next()
+        .unwrap_or("week --")
+        .into()
+}
+fn tray_title(mode: DisplayMode, compact: &str, detailed: &str) -> String {
+    match mode {
+        DisplayMode::Detailed => detailed.into(),
+        DisplayMode::Compact => compact.into(),
+        DisplayMode::IconOnly => String::new(),
     }
 }
 fn status_light(value: Option<&serde_json::Value>) -> &'static str {
@@ -193,17 +213,21 @@ fn start_status_polling(app: AppHandle) {
 fn update_title(app: &AppHandle) {
     let state = app.state::<AppState>();
     let snapshot = state.snapshot.lock().unwrap().clone();
-    let detailed = *state.detailed.lock().unwrap();
+    let display_mode = *state.display_mode.lock().unwrap();
     let refreshing = *state.refreshing.lock().unwrap();
     let status = light(snapshot.as_ref(), refreshing);
     let tray = app.tray_by_id("main").unwrap();
-    let _ = tray.set_title(Some(tray_title(detailed, &summary(snapshot.as_ref()))));
+    let _ = tray.set_title(Some(tray_title(
+        display_mode,
+        &compact_summary(snapshot.as_ref()),
+        &summary(snapshot.as_ref()),
+    )));
     let _ = tray.set_icon(Some(badge_icon(status)));
 }
 fn update(app: &AppHandle) {
     let state = app.state::<AppState>();
     let snapshot = state.snapshot.lock().unwrap().clone();
-    let detailed = *state.detailed.lock().unwrap();
+    let display_mode = *state.display_mode.lock().unwrap();
     let tray = app.tray_by_id("main").unwrap();
     update_title(app);
     let info =
@@ -218,12 +242,41 @@ fn update(app: &AppHandle) {
     items.push(Box::new(
         MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>).unwrap(),
     ));
-    let detailed_item =
-        CheckMenuItem::with_id(app, "detailed", "详细", true, detailed, None::<&str>).unwrap();
-    let icon_item =
-        CheckMenuItem::with_id(app, "icon", "仅图标", true, !detailed, None::<&str>).unwrap();
+    let detailed_item = CheckMenuItem::with_id(
+        app,
+        "detailed",
+        "详细",
+        true,
+        display_mode == DisplayMode::Detailed,
+        None::<&str>,
+    )
+    .unwrap();
+    let compact_item = CheckMenuItem::with_id(
+        app,
+        "compact",
+        "简略",
+        true,
+        display_mode == DisplayMode::Compact,
+        None::<&str>,
+    )
+    .unwrap();
+    let icon_item = CheckMenuItem::with_id(
+        app,
+        "icon",
+        "仅图标",
+        true,
+        display_mode == DisplayMode::IconOnly,
+        None::<&str>,
+    )
+    .unwrap();
     items.push(Box::new(
-        Submenu::with_items(app, "显示方式", true, &[&detailed_item, &icon_item]).unwrap(),
+        Submenu::with_items(
+            app,
+            "显示方式",
+            true,
+            &[&detailed_item, &compact_item, &icon_item],
+        )
+        .unwrap(),
     ));
     let autostart = CheckMenuItem::with_id(
         app,
@@ -258,7 +311,7 @@ fn main() {
             app.manage(AppState {
                 client,
                 snapshot: Mutex::new(None),
-                detailed: Mutex::new(false),
+                display_mode: Mutex::new(DisplayMode::IconOnly),
                 refreshing: Mutex::new(false),
             });
             let mut tray = TrayIconBuilder::with_id("main")
@@ -270,11 +323,15 @@ fn main() {
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "refresh" => refresh(app),
                 "detailed" => {
-                    *app.state::<AppState>().detailed.lock().unwrap() = true;
+                    *app.state::<AppState>().display_mode.lock().unwrap() = DisplayMode::Detailed;
+                    update(app);
+                }
+                "compact" => {
+                    *app.state::<AppState>().display_mode.lock().unwrap() = DisplayMode::Compact;
                     update(app);
                 }
                 "icon" => {
-                    *app.state::<AppState>().detailed.lock().unwrap() = false;
+                    *app.state::<AppState>().display_mode.lock().unwrap() = DisplayMode::IconOnly;
                     update(app);
                 }
                 "autostart" => {
