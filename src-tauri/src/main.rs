@@ -1,5 +1,6 @@
 mod codex;
 mod models;
+mod session;
 
 use chrono::{DateTime, Datelike, Duration, Local};
 use models::ProviderSnapshot;
@@ -105,6 +106,13 @@ fn status_light(value: Option<&serde_json::Value>) -> &'static str {
     }
 }
 fn light(_snapshot: Option<&ProviderSnapshot>, _refreshing: bool) -> &'static str {
+    if let Some(status) = session::live_status() {
+        return match status {
+            "running" => "🟡",
+            "completed" => "🟢",
+            _ => "⚪",
+        };
+    }
     let path = dirs::home_dir().map(|home| home.join(".codex-bar/session-status.json"));
     let state = path
         .and_then(|path| std::fs::read_to_string(path).ok())
