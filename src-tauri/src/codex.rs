@@ -1,12 +1,13 @@
 use std::{fs, path::PathBuf};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CACHE_CONTROL, PRAGMA};
 use serde_json::Value;
 
 use crate::models::{ProviderSnapshot, UsageWindow};
 
-const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const USAGE_URL: &str = "https://chatgpt.com/backend-api/api/codex/usage";
+const LEGACY_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 const MAX_AUTH_BYTES: u64 = 256 * 1024;
@@ -69,6 +70,8 @@ fn headers(auth: &Auth) -> Result<HeaderMap, &'static str> {
     bearer.set_sensitive(true);
     result.insert(AUTHORIZATION, bearer);
     result.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    result.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    result.insert(PRAGMA, HeaderValue::from_static("no-cache"));
     result.insert("originator", HeaderValue::from_static("Codex Desktop"));
     result.insert("OAI-Product-Sku", HeaderValue::from_static("CODEX"));
     if let Some(account_id) = &auth.account_id {
@@ -78,6 +81,10 @@ fn headers(auth: &Auth) -> Result<HeaderMap, &'static str> {
         result.insert("ChatGPT-Account-Id", value);
     }
     Ok(result)
+}
+
+fn usage_urls() -> [&'static str; 2] {
+    [USAGE_URL, LEGACY_USAGE_URL]
 }
 
 fn number_with_key<'a>(value: &'a Value, keys: &[&'a str]) -> Option<(&'a str, f64)> {
@@ -313,19 +320,39 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
         Err(message) => return ProviderSnapshot::failure("signed_out", message),
     };
 
+    let usage_urls = usage_urls();
     let (usage_result, credits_result) = tokio::join!(
         client
-            .get(USAGE_URL)
+            .get(usage_urls[0])
             .headers(request_headers.clone())
             .send(),
-        client.get(CREDITS_URL).headers(request_headers).send(),
+        client
+            .get(CREDITS_URL)
+            .headers(request_headers.clone())
+            .send(),
     );
 
     let usage_response = match usage_result {
         Ok(response) if response.status().is_success() => response,
-        Ok(response) => {
-            let (status, message) = safe_http_failure(response.status());
-            return ProviderSnapshot::failure(status, message);
+        Ok(_) => {
+            match client
+                .get(usage_urls[1])
+                .headers(request_headers.clone())
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => response,
+                Ok(response) => {
+                    let (status, message) = safe_http_failure(response.status());
+                    return ProviderSnapshot::failure(status, message);
+                }
+                Err(_) => {
+                    return ProviderSnapshot::failure(
+                        "unavailable",
+                        "Network unavailable. It will retry automatically.",
+                    )
+                }
+            }
         }
         Err(_) => {
             return ProviderSnapshot::failure(
@@ -444,6 +471,17 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefers_the_current_codex_usage_endpoint_before_the_legacy_endpoint() {
+        assert_eq!(
+            usage_urls(),
+            [
+                "https://chatgpt.com/backend-api/api/codex/usage",
+                "https://chatgpt.com/backend-api/wham/usage",
+            ]
+        );
+    }
 
     #[test]
     fn parses_both_window_shapes() {

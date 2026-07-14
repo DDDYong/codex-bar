@@ -28,10 +28,21 @@ enum DisplayMode {
     IconOnly,
 }
 static POLLING: AtomicBool = AtomicBool::new(false);
+static QUOTA_POLLING: AtomicBool = AtomicBool::new(false);
+const QUOTA_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[cfg(test)]
 mod tests {
-    use super::{status_light, tray_title, DisplayMode};
+    use super::{begin_refresh, status_light, tray_title, DisplayMode, QUOTA_POLL_INTERVAL};
+
+    #[test]
+    fn quota_refreshes_once_per_minute_without_overlapping_requests() {
+        assert_eq!(QUOTA_POLL_INTERVAL, std::time::Duration::from_secs(60));
+
+        let mut refreshing = false;
+        assert!(begin_refresh(&mut refreshing));
+        assert!(!begin_refresh(&mut refreshing));
+    }
 
     #[test]
     fn display_modes_never_put_session_light_in_the_title() {
@@ -187,10 +198,22 @@ fn expiration_lines(snapshot: Option<&ProviderSnapshot>) -> Vec<String> {
         })
         .unwrap_or_default()
 }
+
+fn begin_refresh(refreshing: &mut bool) -> bool {
+    if *refreshing {
+        false
+    } else {
+        *refreshing = true;
+        true
+    }
+}
+
 fn refresh(app: &AppHandle) {
     start_status_polling(app.clone());
     let state = app.state::<AppState>();
-    *state.refreshing.lock().unwrap() = true;
+    if !begin_refresh(&mut state.refreshing.lock().unwrap()) {
+        return;
+    }
     update(app);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -208,6 +231,15 @@ fn start_status_polling(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
         update_title(&app);
+    });
+}
+fn start_quota_polling(app: AppHandle) {
+    if QUOTA_POLLING.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(QUOTA_POLL_INTERVAL);
+        refresh(&app);
     });
 }
 fn update_title(app: &AppHandle) {
@@ -348,6 +380,7 @@ fn main() {
             })
             .build(app)?;
             update(app.handle());
+            start_quota_polling(app.handle().clone());
             refresh(app.handle());
             Ok(())
         })
