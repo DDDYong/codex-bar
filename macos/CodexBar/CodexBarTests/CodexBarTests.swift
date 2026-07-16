@@ -319,11 +319,31 @@ final class CodexBarTests: XCTestCase {
     func testUninstallSkillSurfacesLifecycleError() async {
         let lifecycle = RecordingSkillLifecycleSource(error: TestLifecycleError.failed)
         let state = AppState(skillLifecycleSource: lifecycle)
+        let entry = skillEntry(fileURL: URL(fileURLWithPath: "/tmp/review/SKILL.md"))
 
-        await state.uninstallSkill(skillEntry(fileURL: URL(fileURLWithPath: "/tmp/review/SKILL.md")))
+        await state.uninstallSkill(entry)
 
         XCTAssertEqual(state.skillOperationError, TestLifecycleError.failed.localizedDescription)
+        XCTAssertEqual(state.skillOperationFailureEntryID, entry.id)
         XCTAssertFalse(state.isOperatingOnSkill)
+    }
+
+    @MainActor
+    func testUninstallSkillClearsFailureAssociationWhenNextOperationSucceeds() async {
+        let lifecycle = FailOnceSkillLifecycleSource()
+        let state = AppState(skillLifecycleSource: lifecycle)
+        let failedEntry = skillEntry(fileURL: URL(fileURLWithPath: "/tmp/failed/SKILL.md"))
+        let succeedingEntry = skillEntry(fileURL: URL(fileURLWithPath: "/tmp/succeeding/SKILL.md"))
+
+        await state.uninstallSkill(failedEntry)
+
+        XCTAssertEqual(state.skillOperationFailureEntryID, failedEntry.id)
+
+        await state.uninstallSkill(succeedingEntry)
+
+        XCTAssertNil(state.skillOperationError)
+        XCTAssertNil(state.skillOperationFailureEntryID)
+        XCTAssertEqual(lifecycle.uninstalledEntryIDs, [succeedingEntry.id])
     }
 
     func testUninstallSkillRemovesVerifiedSkillDirectory() throws {
@@ -526,6 +546,19 @@ private final class RecordingSkillLifecycleSource: SkillLifecycleManaging {
 
     func uninstall(_ entry: PluginSkillEntry) throws {
         if let error { throw error }
+        uninstalledEntryIDs.append(entry.id)
+    }
+}
+
+private final class FailOnceSkillLifecycleSource: SkillLifecycleManaging {
+    private(set) var uninstalledEntryIDs: [String] = []
+    private var shouldFail = true
+
+    func uninstall(_ entry: PluginSkillEntry) throws {
+        if shouldFail {
+            shouldFail = false
+            throw TestLifecycleError.failed
+        }
         uninstalledEntryIDs.append(entry.id)
     }
 }

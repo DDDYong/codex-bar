@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isIndexingPluginsSkills = false
     @Published private(set) var skillOperationError: String?
     @Published private(set) var skillOperationEntryID: String?
+    @Published private(set) var skillOperationFailureEntryID: String?
     @Published private(set) var tokenActivityStats: TokenActivityStats = .empty
     @Published private(set) var isIndexingTokenActivity = false
 
@@ -233,11 +234,13 @@ final class AppState: ObservableObject {
         guard skillOperationEntryID == nil else { return }
         skillOperationEntryID = entry.id
         skillOperationError = nil
+        skillOperationFailureEntryID = nil
         do {
             try skillLifecycleSource.uninstall(entry)
             refreshPluginSkillIndex()
         } catch {
             skillOperationError = error.localizedDescription
+            skillOperationFailureEntryID = entry.id
         }
         skillOperationEntryID = nil
     }

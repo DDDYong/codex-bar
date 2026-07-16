@@ -207,7 +207,9 @@ private struct PluginSkillDetailSheet: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
             Text(entry.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            if let error = appState.skillOperationError {
+            if entry.kind == .skill,
+               appState.skillOperationFailureEntryID == entry.id,
+               let error = appState.skillOperationError {
                 Text("Skill 卸载失败：\(error)")
                     .font(.caption)
                     .foregroundStyle(.orange)
