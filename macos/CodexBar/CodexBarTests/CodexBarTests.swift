@@ -302,6 +302,68 @@ final class CodexBarTests: XCTestCase {
         XCTAssertFalse(state.isOperatingOnSession)
     }
 
+    func testUninstallSkillRemovesVerifiedSkillDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let skillRoot = root.appendingPathComponent("skills")
+        let skillFile = skillRoot.appendingPathComponent("review/SKILL.md")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: skillFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("skill body".utf8).write(to: skillFile)
+
+        try SkillLifecycleSource(skillRootURL: skillRoot).uninstall(skillEntry(fileURL: skillFile))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: skillFile.deletingLastPathComponent().path))
+    }
+
+    func testUninstallSkillRejectsPluginEntry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let skillRoot = root.appendingPathComponent("skills")
+        let skillFile = skillRoot.appendingPathComponent("review/SKILL.md")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: skillFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("skill body".utf8).write(to: skillFile)
+        let entry = PluginSkillEntry(id: skillFile.path, kind: .plugin, name: "review", detail: nil, path: skillFile.path)
+
+        XCTAssertThrowsError(try SkillLifecycleSource(skillRootURL: skillRoot).uninstall(entry))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: skillFile.path))
+    }
+
+    func testUninstallSkillRejectsSkillFileOutsideConfiguredRoot() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let skillRoot = root.appendingPathComponent("skills")
+        let skillFile = root.appendingPathComponent("outside/review/SKILL.md")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: skillFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("skill body".utf8).write(to: skillFile)
+
+        XCTAssertThrowsError(try SkillLifecycleSource(skillRootURL: skillRoot).uninstall(skillEntry(fileURL: skillFile)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: skillFile.path))
+    }
+
+    func testUninstallSkillRejectsReadmeInsideConfiguredRoot() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let skillRoot = root.appendingPathComponent("skills")
+        let readme = skillRoot.appendingPathComponent("review/README.md")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: readme.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("readme body".utf8).write(to: readme)
+
+        XCTAssertThrowsError(try SkillLifecycleSource(skillRootURL: skillRoot).uninstall(skillEntry(fileURL: readme)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: readme.path))
+    }
+
+    func testUninstallSkillRejectsMissingSkillFile() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let skillRoot = root.appendingPathComponent("skills")
+        let skillDirectory = skillRoot.appendingPathComponent("review")
+        let missingSkillFile = skillDirectory.appendingPathComponent("SKILL.md")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(try SkillLifecycleSource(skillRootURL: skillRoot).uninstall(skillEntry(fileURL: missingSkillFile)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: skillDirectory.path))
+    }
+
     func testPluginSkillSourceRecognizesOnlyCodexManifestAndSkillMetadata() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -374,6 +436,10 @@ final class CodexBarTests: XCTestCase {
             fileSize: 0,
             storage: .active
         )
+    }
+
+    private func skillEntry(fileURL: URL) -> PluginSkillEntry {
+        PluginSkillEntry(id: fileURL.path, kind: .skill, name: "review", detail: nil, path: fileURL.path)
     }
 }
 
