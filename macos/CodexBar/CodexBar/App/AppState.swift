@@ -104,7 +104,7 @@ final class AppState: ObservableObject {
         (currentUsage ?? lastSuccessfulUsage == nil ? 0 : 2)
             + (sessionActivity == .unknown ? 0 : 1)
             + (snapshots.isEmpty ? 0 : 1)
-            + (tokenActivityStats.daily.isEmpty ? 0 : 1)
+            + (tokenActivityStats.localRecordDays.isEmpty ? 0 : 1)
     }
 
     func start() {

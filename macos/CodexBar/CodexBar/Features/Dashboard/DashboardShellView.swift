@@ -472,7 +472,7 @@ private struct DataSourcesView: View {
                     SourceStatusRow(name: "Reset", status: usage == nil ? "未就绪" : "可用", updatedAt: usage?.updatedAt, risk: "随 Usage 刷新解析，仅读取已使用的接口响应。", error: appState.usageError)
                     SourceStatusRow(name: "会话活动", status: appState.sessionActivity == .unknown ? "暂无活动" : "可用", updatedAt: appState.sessionActivity == .unknown ? nil : Date(), risk: "仅聚合近期事件类型，不保存或展示会话正文。", error: nil)
                     SourceStatusRow(name: "额度快照", status: appState.snapshots.isEmpty ? "暂无记录" : "可用", updatedAt: appState.snapshots.last?.capturedAt, risk: "仅保存剩余额度百分比、时间和 Reset 次数。", error: nil)
-                    SourceStatusRow(name: "Token 活动", status: appState.tokenActivityStats.daily.isEmpty ? "未就绪" : "可用", updatedAt: appState.tokenActivityStats.daily.last?.date, risk: "仅读取会话事件的 Token 计数与时间戳，不读取或展示会话正文。", error: appState.tokenActivityStats.daily.isEmpty ? "尚未完成本机 Token 元数据索引。" : nil)
+                    SourceStatusRow(name: "本机活动日期", status: appState.tokenActivityStats.localRecordDays.isEmpty ? "未就绪" : "可用", updatedAt: appState.tokenActivityStats.localRecordDays.last, risk: "仅读取会话事件的时间戳，不读取或展示会话正文、Token 计数。", error: appState.tokenActivityStats.localRecordDays.isEmpty ? "尚未发现本机会话日期记录。" : nil)
                 }
             }
             .padding(22)
@@ -768,113 +768,78 @@ private struct ActivityTrendView: View {
 }
 
 private struct TokenActivityPanel: View {
+    @EnvironmentObject private var appState: AppState
     let stats: TokenActivityStats
     let isLoading: Bool
-    @State private var range: Range = .daily
-    @State private var selectedPoint: ChartPoint?
-
-    private enum Range: String, CaseIterable, Identifiable {
-        case daily = "每日"
-        case weekly = "每周"
-        case cumulative = "累计"
-        var id: Self { self }
-    }
-
-    private struct ChartPoint: Identifiable {
-        let date: Date
-        let value: Int
-        var id: Date { date }
-    }
+    @State private var isImporting = false
+    @State private var draft: ProfileSnapshotDraft?
+    @State private var isReviewingDraft = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Token 活动").font(.headline)
                 Spacer()
-                Picker("维度", selection: $range) {
-                    ForEach(Range.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 210)
             }
-            if isLoading {
-                ProgressView("正在汇总本机 Token 元数据…")
-            } else if stats.daily.isEmpty {
-                Text("尚未发现可聚合的本机 Token 活动事件。")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 0) {
-                    metric("累计 Token 数", TokenFormatter.compact(stats.totalTokens))
-                    metric("峰值 Token 数", TokenFormatter.compact(stats.peakTokens))
-                    metric("最长任务时长", DurationFormatter.compact(stats.longestSessionDuration))
-                    metric("当前连续天数", "\(stats.currentStreakDays) 天")
-                    metric("最长连续天数", "\(stats.longestStreakDays) 天")
-                }
-                .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
 
-                Chart(chartData) { item in
-                    BarMark(x: .value("时间", item.date), y: .value("Token", item.value))
-                        .foregroundStyle(PrototypePalette.blue.gradient)
-                        .annotation(position: .top, alignment: .center) {
-                            if selectedPoint?.id == item.id {
-                                Text("\(UIStamp.dayString(item.date)) · \(TokenFormatter.compact(item.value))")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(PrototypePalette.panel, in: Capsule())
-                                    .zIndex(2)
-                            }
-                        }
-                    if selectedPoint?.id == item.id {
-                        RuleMark(x: .value("选中时间", item.date))
-                            .foregroundStyle(.secondary.opacity(0.5))
-                    }
-                }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 7)) { value in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                        AxisValueLabel {
-                            if let date = value.as(Date.self) {
-                                Text(UIStamp.dayString(date))
-                            }
-                        }
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
-                        AxisGridLine()
-                        AxisValueLabel {
-                            if let tokenCount = value.as(Int.self) {
-                                Text(TokenFormatter.compact(tokenCount))
-                            }
-                        }
-                    }
-                }
-                .chartOverlay { proxy in
-                    GeometryReader { geometry in
-                        Rectangle()
-                            .fill(.clear)
-                            .contentShape(Rectangle())
-                            .gesture(
-                                SpatialTapGesture()
-                                    .onEnded { value in
-                                        let plotFrame = geometry[proxy.plotAreaFrame]
-                                        let x = value.location.x - plotFrame.origin.x
-                                        guard let date: Date = proxy.value(atX: x) else { return }
-                                        selectedPoint = chartData.min {
-                                            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-                                        }
-                                    }
-                            )
-                    }
-                }
-                .frame(height: 150)
-            }
+            officialSnapshotSection
+            Divider().overlay(PrototypePalette.line)
+            localRecordSection
         }
         .padding(16)
         .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(PrototypePalette.line))
+        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.image]) { result in
+            guard case let .success(url) = result,
+                  let imageData = try? Data(contentsOf: url) else { return }
+            recognize(imageData)
+        }
+        .onDrop(of: [.image], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            provider.loadDataRepresentation(forTypeIdentifier: "public.image") { data, _ in
+                guard let data else { return }
+                DispatchQueue.main.async { recognize(data) }
+            }
+            return true
+        }
+        .sheet(isPresented: $isReviewingDraft, onDismiss: discardDraft) {
+            if let draft {
+                ProfileSnapshotReviewSheet(draft: draft) { confirmedDraft in
+                    appState.saveProfileSnapshot(confirmedDraft)
+                    discardDraft()
+                } onCancel: {
+                    discardDraft()
+                }
+            }
+        }
+    }
+
+    private var officialSnapshotSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("全设备官方快照").font(.headline)
+            if let snapshot = appState.profileSnapshot {
+                HStack(spacing: 0) {
+                    metric("累计 Token", TokenFormatter.compact(snapshot.totalTokens))
+                    metric("峰值日", TokenFormatter.compact(snapshot.peakDayTokens))
+                    metric("当前连续", "\(snapshot.currentStreakDays) 天")
+                    metric("最长连续", "\(snapshot.longestStreakDays) 天")
+                }
+                .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                Text("来源：\(snapshot.sourceLabel) · 同步于 \(UIStamp.string(snapshot.importedAt))")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("导入 Codex Profile 卡片以显示全设备官方数据")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = appState.profileSnapshotError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Button("更新官方快照") { isImporting = true }
+                Button("清除官方快照", role: .destructive) { appState.clearProfileSnapshot() }
+                    .disabled(appState.profileSnapshot == nil)
+            }
+        }
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
@@ -886,34 +851,105 @@ private struct TokenActivityPanel: View {
         .padding(.vertical, 8)
     }
 
-    private var chartData: [ChartPoint] {
-        let daily = continuousDailyData
-        switch range {
-        case .daily:
-            return daily.map { ChartPoint(date: $0.date, value: $0.totalTokens) }
-        case .weekly:
-            return Dictionary(grouping: daily) { Calendar.current.component(.weekOfYear, from: $0.date) }
-                .sorted { $0.key < $1.key }
-                .compactMap { week, values in
-                    guard let first = values.first else { return nil }
-                    return ChartPoint(date: first.date, value: values.reduce(0) { $0 + $1.totalTokens })
+    private var localRecordSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("本机 Mac 明细 · 仅此 Mac").font(.headline)
+            if isLoading {
+                ProgressView("正在发现本机记录日期…")
+            } else {
+                Text("本机发现记录的日期：\(stats.localRecordDays.count) 天")
+                    .font(.subheadline)
+                if stats.localRecordDays.isEmpty {
+                    Text("尚未发现带有效时间戳的本机记录。")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
+                        ForEach(stats.localRecordDays, id: \.self) { day in
+                            Text(UIStamp.dayString(day))
+                                .font(.caption2)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 5)
+                                .background(PrototypePalette.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 5))
+                        }
+                    }
                 }
-        case .cumulative:
-            var running = 0
-            return daily.map { day in
-                running += day.totalTokens
-                return ChartPoint(date: day.date, value: running)
             }
         }
     }
 
-    private var continuousDailyData: [TokenActivityDay] {
-        guard let lastDay = stats.activeDays.last ?? stats.daily.last?.date else { return [] }
-        let firstDay = Calendar.current.date(byAdding: .day, value: -89, to: lastDay) ?? lastDay
-        let totals = Dictionary(uniqueKeysWithValues: stats.daily.map { ($0.date, $0.totalTokens) })
-        return (0...89).compactMap { offset in
-            guard let date = Calendar.current.date(byAdding: .day, value: offset, to: firstDay) else { return nil }
-            return TokenActivityDay(date: date, totalTokens: totals[date] ?? 0)
+    private func recognize(_ imageData: Data) {
+        Task {
+            guard let recognizedDraft = await appState.recognizeProfileSnapshot(imageData: imageData) else { return }
+            draft = recognizedDraft
+            isReviewingDraft = true
+        }
+    }
+
+    private func discardDraft() {
+        draft = nil
+        isReviewingDraft = false
+    }
+}
+
+private struct ProfileSnapshotReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var totalTokens: String
+    @State private var peakDayTokens: String
+    @State private var currentStreakDays: String
+    @State private var longestStreakDays: String
+    let onConfirm: (ProfileSnapshotDraft) -> Void
+    let onCancel: () -> Void
+
+    init(draft: ProfileSnapshotDraft, onConfirm: @escaping (ProfileSnapshotDraft) -> Void, onCancel: @escaping () -> Void) {
+        _totalTokens = State(initialValue: draft.totalTokens.map(TokenFormatter.compact) ?? "官方快照未提供")
+        _peakDayTokens = State(initialValue: draft.peakDayTokens.map(TokenFormatter.compact) ?? "官方快照未提供")
+        _currentStreakDays = State(initialValue: draft.currentStreakDays.map { "\($0) 天" } ?? "官方快照未提供")
+        _longestStreakDays = State(initialValue: draft.longestStreakDays.map { "\($0) 天" } ?? "官方快照未提供")
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("确认官方快照").font(.title3.weight(.bold))
+            Text("请核对并补全四项官方数据后再保存。图片不会被保存。")
+                .font(.caption).foregroundStyle(.secondary)
+            field("累计 Token", text: $totalTokens)
+            field("峰值日", text: $peakDayTokens)
+            field("当前连续", text: $currentStreakDays)
+            field("最长连续", text: $longestStreakDays)
+            HStack {
+                Button("取消") {
+                    onCancel()
+                    dismiss()
+                }
+                Spacer()
+                Button("确认保存") {
+                    onConfirm(ProfileSnapshotDraft(
+                        totalTokens: ProfileCardRecognizer.parseNumber(totalTokens),
+                        peakDayTokens: ProfileCardRecognizer.parseNumber(peakDayTokens),
+                        currentStreakDays: ProfileCardRecognizer.parseNumber(currentStreakDays),
+                        longestStreakDays: ProfileCardRecognizer.parseNumber(longestStreakDays)
+                    ))
+                    dismiss()
+                }
+                .disabled(!isComplete)
+            }
+        }
+        .padding(22)
+        .frame(width: 390)
+    }
+
+    private var isComplete: Bool {
+        [totalTokens, peakDayTokens, currentStreakDays, longestStreakDays]
+            .allSatisfy { ProfileCardRecognizer.parseNumber($0) != nil }
+    }
+
+    private func field(_ title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            TextField(title, text: text)
+                .textFieldStyle(.roundedBorder)
         }
     }
 }

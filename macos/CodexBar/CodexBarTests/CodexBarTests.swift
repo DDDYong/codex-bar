@@ -547,23 +547,27 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(entries.map(\.name), ["documents@openai-primary-runtime", "playwright"])
     }
 
-    func testTokenActivitySourceAggregatesOnlyTimestampedUsageMetadata() throws {
+    func testTokenActivitySourceReportsOnlyLocalRecordDates() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let events = [
             "{\"timestamp\":\"2026-07-14T10:00:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":120}}}}",
             "{\"timestamp\":\"2026-07-14T10:05:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":80}}}}",
-            "{\"timestamp\":\"2026-07-15T11:00:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":240}}}}"
+            "{\"timestamp\":\"2026-07-15T11:00:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":240}}}}",
+            "{\"timestamp\":\"not-a-timestamp\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":999}}}}"
         ].joined(separator: "\n")
         try Data(events.utf8).write(to: root.appendingPathComponent("thread.jsonl"))
 
-        let stats = TokenActivitySource(rootURL: root).scan()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let stats = TokenActivitySource(rootURL: root, calendar: calendar).scan()
 
-        XCTAssertEqual(stats.totalTokens, 440)
-        XCTAssertEqual(stats.peakTokens, 240)
-        XCTAssertEqual(stats.daily.count, 2)
-        XCTAssertEqual(stats.longestSessionDuration, 5 * 60)
+        let expectedDays = ["2026-07-14T00:00:00Z", "2026-07-15T00:00:00Z"]
+            .compactMap { ISO8601DateFormatter().date(from: $0) }
+
+        XCTAssertEqual(stats.localRecordDays, expectedDays)
+        XCTAssertEqual(Mirror(reflecting: stats).children.compactMap(\.label), ["localRecordDays"])
     }
 
     private func snapshotRecord(capturedAt: Date, weekly: Double, short: Double) -> UsageSnapshotRecord {

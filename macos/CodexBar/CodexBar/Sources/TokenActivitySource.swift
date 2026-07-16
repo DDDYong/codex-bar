@@ -1,7 +1,7 @@
 import Foundation
 
-/// Aggregates only timestamped token counters from local Codex event metadata.
-/// Conversation text, tool arguments, and authentication data are never retained.
+/// Finds only calendar dates for local Codex JSONL records with valid timestamps.
+/// Event payloads and Token values are intentionally not read.
 struct TokenActivitySource {
     private let rootURL: URL
     private let fileManager: FileManager
@@ -21,100 +21,39 @@ struct TokenActivitySource {
             options: [.skipsHiddenFiles]
         ) else { return .empty }
 
-        var dailyTotals: [Date: Int] = [:]
-        var activeDays: Set<Date> = []
-        var seenUsage: Set<String> = []
-        var peakTokens = 0
-        var longestDuration: TimeInterval = 0
-
+        var localRecordDays = Set<Date>()
         for case let fileURL as URL in enumerator where fileURL.pathExtension == "jsonl" {
             guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
                   values.isRegularFile == true,
-                  values.fileSize ?? 0 <= 16 * 1024 * 1024,
-                  let data = try? Data(contentsOf: fileURL),
-                  let text = String(data: data, encoding: .utf8) else { continue }
+                  values.fileSize ?? 0 <= 16 * 1024 * 1024 else { continue }
 
-            var activityStartedAt: Date?
-            var previousTimestamp: Date?
-            for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-                guard let root = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+            readLines(from: fileURL) { line in
+                guard let root = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                       let timestamp = root["timestamp"] as? String,
-                      let date = Self.date(from: timestamp) else { continue }
-
-                activeDays.insert(calendar.startOfDay(for: date))
-                if let previousTimestamp,
-                   date.timeIntervalSince(previousTimestamp) > Self.activityGap {
-                    if let activityStartedAt {
-                        longestDuration = max(longestDuration, previousTimestamp.timeIntervalSince(activityStartedAt))
-                    }
-                    activityStartedAt = date
-                } else if activityStartedAt == nil {
-                    activityStartedAt = date
-                }
-                previousTimestamp = date
-                guard let payload = root["payload"] as? [String: Any],
-                      let info = payload["info"] as? [String: Any],
-                      let usage = info["last_token_usage"] as? [String: Any],
-                      let total = Self.integer(usage["total_tokens"]), total > 0 else { continue }
-
-                let usageID = "\(timestamp)-\(total)"
-                guard seenUsage.insert(usageID).inserted else { continue }
-                dailyTotals[calendar.startOfDay(for: date), default: 0] += total
-                peakTokens = max(peakTokens, total)
-            }
-            if let activityStartedAt, let previousTimestamp {
-                longestDuration = max(longestDuration, previousTimestamp.timeIntervalSince(activityStartedAt))
+                      let date = Self.date(from: timestamp) else { return }
+                localRecordDays.insert(calendar.startOfDay(for: date))
             }
         }
-
-        let daily = dailyTotals.map { TokenActivityDay(date: $0.key, totalTokens: $0.value) }
-            .sorted { $0.date < $1.date }
-        let activeDayList = activeDays.sorted()
-        let streaks = Self.streaks(for: activeDayList, calendar: calendar)
-        return TokenActivityStats(
-            totalTokens: daily.reduce(0) { $0 + $1.totalTokens },
-            peakTokens: peakTokens,
-            longestSessionDuration: longestDuration,
-            currentStreakDays: streaks.current,
-            longestStreakDays: streaks.longest,
-            daily: daily,
-            activeDays: activeDayList
-        )
+        return TokenActivityStats(localRecordDays: localRecordDays.sorted())
     }
 
-    private static func integer(_ value: Any?) -> Int? {
-        if let value = value as? Int { return value }
-        if let value = value as? NSNumber { return value.intValue }
-        if let value = value as? String { return Int(value) }
-        return nil
+    private func readLines(from fileURL: URL, consume: (Data) -> Void) {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return }
+        defer { try? handle.close() }
+
+        var pending = Data()
+        while let chunk = try? handle.read(upToCount: 4_096), !chunk.isEmpty {
+            pending.append(chunk)
+            while let newline = pending.firstIndex(of: 0x0A) {
+                consume(pending.prefix(upTo: newline))
+                pending.removeSubrange(...newline)
+            }
+        }
+        if !pending.isEmpty { consume(pending) }
     }
 
     private static func date(from value: String) -> Date? {
         fractionalISO.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-    }
-
-    private static func streaks(for days: [Date], calendar: Calendar) -> (current: Int, longest: Int) {
-        guard !days.isEmpty else { return (0, 0) }
-        let sorted = days.sorted()
-        var longest = 1
-        var running = 1
-        for index in 1..<sorted.count {
-            if calendar.dateComponents([.day], from: sorted[index - 1], to: sorted[index]).day == 1 {
-                running += 1
-                longest = max(longest, running)
-            } else {
-                running = 1
-            }
-        }
-        let today = calendar.startOfDay(for: Date())
-        let last = sorted.last!
-        guard calendar.dateComponents([.day], from: last, to: today).day ?? 2 <= 1 else { return (0, longest) }
-        var current = 1
-        for index in stride(from: sorted.count - 1, through: 1, by: -1) {
-            guard calendar.dateComponents([.day], from: sorted[index - 1], to: sorted[index]).day == 1 else { break }
-            current += 1
-        }
-        return (current, longest)
     }
 
     private static let fractionalISO: ISO8601DateFormatter = {
@@ -122,6 +61,4 @@ struct TokenActivitySource {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-
-    private static let activityGap: TimeInterval = 20 * 60
 }
