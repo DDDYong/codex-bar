@@ -2,6 +2,49 @@ import XCTest
 @testable import CodexBar
 
 final class CodexBarTests: XCTestCase {
+    func testProfileCardParserExtractsLabeledChineseMetrics() throws {
+        let draft = try ProfileCardRecognizer.parse(lines: [
+            "17.8亿", "累计 Token", "9500.5万", "峰值日",
+            "17 天", "当前连续天数", "31 天", "最长连续使用"
+        ])
+
+        XCTAssertEqual(draft.totalTokens, 1_780_000_000)
+        XCTAssertEqual(draft.peakDayTokens, 95_005_000)
+        XCTAssertEqual(draft.currentStreakDays, 17)
+        XCTAssertEqual(draft.longestStreakDays, 31)
+    }
+
+    func testProfileCardParserReturnsOnlyRecognizedMetricsWhenFieldsAreMissing() throws {
+        let draft = try ProfileCardRecognizer.parse(lines: [
+            "17.8亿", "累计 Token", "17 天", "当前连续天数"
+        ])
+
+        XCTAssertEqual(draft.totalTokens, 1_780_000_000)
+        XCTAssertNil(draft.peakDayTokens)
+        XCTAssertEqual(draft.currentStreakDays, 17)
+        XCTAssertNil(draft.longestStreakDays)
+    }
+
+    @MainActor
+    func testSaveProfileSnapshotPublishesConfirmedDraft() {
+        let fileURL = profileSnapshotFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let state = AppState(profileSnapshotStore: ProfileSnapshotStore(fileURL: fileURL))
+        let draft = ProfileSnapshotDraft(
+            totalTokens: 1_780_000_000,
+            peakDayTokens: 95_005_000,
+            currentStreakDays: 17,
+            longestStreakDays: 31
+        )
+
+        state.saveProfileSnapshot(draft)
+
+        XCTAssertEqual(state.profileSnapshot?.totalTokens, 1_780_000_000)
+        XCTAssertEqual(state.profileSnapshot?.peakDayTokens, 95_005_000)
+        XCTAssertEqual(state.profileSnapshot?.currentStreakDays, 17)
+        XCTAssertEqual(state.profileSnapshot?.longestStreakDays, 31)
+    }
+
     func testProfileSnapshotStoreRoundTripsConfirmedValues() throws {
         let fileURL = profileSnapshotFileURL()
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }

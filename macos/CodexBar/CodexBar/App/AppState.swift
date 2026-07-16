@@ -47,6 +47,8 @@ final class AppState: ObservableObject {
     @Published private(set) var skillOperationFailureEntryID: String?
     @Published private(set) var tokenActivityStats: TokenActivityStats = .empty
     @Published private(set) var isIndexingTokenActivity = false
+    @Published private(set) var profileSnapshot: ProfileSnapshot?
+    @Published var profileSnapshotError: String?
 
     private let usageSource: CodexUsageSource
     private let sessionSource: SessionActivitySource
@@ -56,6 +58,7 @@ final class AppState: ObservableObject {
     private let pluginSkillSource: PluginSkillSource
     private let skillLifecycleSource: SkillLifecycleManaging
     private let tokenActivitySource: TokenActivitySource
+    private let profileSnapshotStore: ProfileSnapshotStore
     private let settingsStore: SettingsStore
     private var refreshTask: Task<Void, Never>?
     private var quotaPollingTask: Task<Void, Never>?
@@ -70,7 +73,8 @@ final class AppState: ObservableObject {
         sessionLifecycleSource: SessionLifecycleManaging = SessionLifecycleSource(),
         pluginSkillSource: PluginSkillSource = PluginSkillSource(),
         skillLifecycleSource: SkillLifecycleManaging = SkillLifecycleSource(),
-        tokenActivitySource: TokenActivitySource = TokenActivitySource()
+        tokenActivitySource: TokenActivitySource = TokenActivitySource(),
+        profileSnapshotStore: ProfileSnapshotStore = ProfileSnapshotStore()
     ) {
         self.usageSource = usageSource
         self.sessionSource = sessionSource
@@ -81,7 +85,9 @@ final class AppState: ObservableObject {
         self.pluginSkillSource = pluginSkillSource
         self.skillLifecycleSource = skillLifecycleSource
         self.tokenActivitySource = tokenActivitySource
+        self.profileSnapshotStore = profileSnapshotStore
         self.snapshots = snapshotStore.load()
+        self.profileSnapshot = profileSnapshotStore.load()
         let settings = settingsStore.load()
         self.displayMode = settings.displayMode
         self.theme = settings.theme
@@ -150,6 +156,47 @@ final class AppState: ObservableObject {
     func clearSnapshots() {
         try? snapshotStore.clear()
         snapshots = []
+    }
+
+    func saveProfileSnapshot(_ draft: ProfileSnapshotDraft) {
+        guard let totalTokens = draft.totalTokens,
+              let peakDayTokens = draft.peakDayTokens,
+              let currentStreakDays = draft.currentStreakDays,
+              let longestStreakDays = draft.longestStreakDays,
+              totalTokens >= 0,
+              peakDayTokens >= 0,
+              currentStreakDays >= 0,
+              longestStreakDays >= 0 else {
+            profileSnapshotError = "请确认四项资料均已识别"
+            return
+        }
+
+        let snapshot = ProfileSnapshot(
+            totalTokens: totalTokens,
+            peakDayTokens: peakDayTokens,
+            currentStreakDays: currentStreakDays,
+            longestStreakDays: longestStreakDays,
+            importedAt: Date(),
+            sourceLabel: "Codex Profile 分享卡片"
+        )
+
+        do {
+            try profileSnapshotStore.save(snapshot)
+            profileSnapshot = snapshot
+            profileSnapshotError = nil
+        } catch {
+            profileSnapshotError = error.localizedDescription
+        }
+    }
+
+    func clearProfileSnapshot() {
+        do {
+            try profileSnapshotStore.clear()
+            profileSnapshot = nil
+            profileSnapshotError = nil
+        } catch {
+            profileSnapshotError = error.localizedDescription
+        }
     }
 
     func saveCurrentSnapshot() {
