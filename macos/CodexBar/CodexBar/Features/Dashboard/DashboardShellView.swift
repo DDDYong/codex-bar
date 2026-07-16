@@ -310,6 +310,10 @@ private struct SessionsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) { Text("Codex 会话").font(.title3.weight(.bold)); }
+                    if appState.isIndexingSessions {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                     Spacer()
                     Button("重新索引") { appState.refreshSessionIndex() }
                         .disabled(appState.isIndexingSessions)
@@ -336,10 +340,7 @@ private struct SessionsView: View {
             .padding(.top, 22)
             .padding(.bottom, 14)
 
-            if appState.isIndexingSessions {
-                ProgressView("正在只读索引会话元数据…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !appState.settings().sessionIndexEnabled {
+            if !appState.settings().sessionIndexEnabled {
                 UsageEmptyState(title: "会话索引已关闭", message: "可在“设置”中开启会话元数据读取。", icon: "lock")
             } else if entries.isEmpty {
                 UsageEmptyState(title: "暂无可验证会话", message: "索引只接受结构可识别的 JSONL 元数据，损坏文件会被跳过。", icon: "tray")
@@ -376,22 +377,32 @@ private struct SessionsView: View {
                                             .buttonStyle(.bordered)
                                             .disabled(isOperating)
                                     }
-                                    Button(entry.storage == .active ? "归档" : "取消归档") {
+                                    Button {
                                         Task {
                                             if entry.storage == .active { await appState.archiveSession(entry) }
                                             else { await appState.unarchiveSession(entry) }
                                         }
+                                    } label: {
+                                        if isOperating {
+                                            HStack(spacing: 5) {
+                                                ProgressView()
+                                                Text("处理中…")
+                                            }
+                                        } else {
+                                            Text(entry.storage == .active ? "归档" : "取消归档")
+                                        }
                                     }
                                     .buttonStyle(.bordered)
                                     .disabled(isOperating)
+                                    .frame(minWidth: 82)
                                 }
                                 .controlSize(.small)
-                                if isOperating {
-                                    ProgressView("正在处理…").font(.caption)
-                                }
                             }
                             .padding(14).background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14)).overlay(RoundedRectangle(cornerRadius: 14).stroke(PrototypePalette.line))
                         }
+                    }
+                    .transaction { transaction in
+                        transaction.animation = nil
                     }
                     .padding(.horizontal, 22)
                     .padding(.bottom, 22)
@@ -1140,7 +1151,7 @@ private struct DashboardHomeView: View {
 
     private func resetDescription(_ value: String?) -> String {
         guard let value else { return "暂未提供重置时间" }
-        return "重置 " + UIStamp.string(value)
+        return UIStamp.expiryString(value)
     }
 }
 
@@ -1152,16 +1163,27 @@ private struct QuotaMetricCard: View {
 
     var body: some View {
         DashboardTopCard(title: title) {
-            HStack(spacing: 13) {
+            HStack(spacing: 11) {
                 ZStack {
                     Circle().stroke(accent.opacity(0.15), lineWidth: 9)
                     Circle().trim(from: 0, to: CGFloat((percentage ?? 0) / 100)).stroke(accent, style: StrokeStyle(lineWidth: 9, lineCap: .round)).rotationEffect(.degrees(-90))
                     VStack(spacing: 1) { Text(percentage.map { String(format: "%.0f%%", $0) } ?? "--").font(.title3.weight(.bold)); Text("剩余").font(.caption2).foregroundStyle(.secondary) }
                 }
-                .frame(width: 72, height: 72)
+                .frame(width: 62, height: 62)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("实时额度").font(.caption).foregroundStyle(.secondary)
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    HStack(spacing: 4) {
+                        Text("下次重置: ")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                        Text(detail)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .layoutPriority(1)
+                    }
                 }
             }
         }
@@ -1173,18 +1195,21 @@ private struct ResetMetricCard: View {
 
     var body: some View {
         DashboardTopCard(title: "Reset 次数") {
-            HStack(spacing: 13) {
+            HStack(spacing: 11) {
                 ZStack {
                     Circle().fill(.green)
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 36, weight: .bold))
+                        .font(.system(size: 30, weight: .bold))
                         .foregroundStyle(.black.opacity(0.78))
                 }
-                .frame(width: 72, height: 72)
+                .frame(width: 62, height: 62)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(credits.availableCount.map { "\($0) 次" } ?? "--").font(.title2.weight(.bold))
-                    Text("当前可用").font(.caption).foregroundStyle(.secondary)
-                    Text(credits.expiresAt.first.map { "最近到期：\(UIStamp.expiryString($0))" } ?? "暂无到期时间").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(credits.expiresAt.first.map { "最近到期: \(UIStamp.expiryString($0))" } ?? "暂无到期时间")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
             }
         }

@@ -6,6 +6,10 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(DashboardRoute.allCases.count, 7)
     }
 
+    func testDashboardDefaultWindowSizeMatchesMinimumWindowSize() {
+        XCTAssertEqual(AppConfiguration.defaultWindowSize, AppConfiguration.minimumWindowSize)
+    }
+
     func testUsageParserSupportsSnakeCaseAndCamelCaseWindows() throws {
         let payload = try JSONSerialization.data(withJSONObject: [
             "rateLimit": [
@@ -200,6 +204,40 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(runner.commands.first?.1, ["codex", "archive", "thread-123"])
     }
 
+    func testUnarchiveAcceptsCLIErrorWhenSessionFileWasRestored() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activeRoot = root.appendingPathComponent("sessions")
+        let archivedRoot = root.appendingPathComponent("archived_sessions")
+        try FileManager.default.createDirectory(at: archivedRoot, withIntermediateDirectories: true)
+        let archivedFile = archivedRoot.appendingPathComponent("rollout-thread-123.jsonl")
+        try Data("metadata only".utf8).write(to: archivedFile)
+
+        let runner = ClosureSessionCommandRunner {
+            let restoredDirectory = activeRoot.appendingPathComponent("2026/07/16")
+            try FileManager.default.createDirectory(at: restoredDirectory, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: archivedFile, to: restoredDirectory.appendingPathComponent(archivedFile.lastPathComponent))
+            return SessionCommandResult(status: 1, standardError: "Error: failed to unarchive session")
+        }
+        let source = SessionLifecycleSource(
+            activeRootURL: activeRoot,
+            archivedRootURL: archivedRoot,
+            commandRunner: runner
+        )
+        let entry = SessionIndexEntry(
+            id: archivedFile.path,
+            threadID: "thread-123",
+            title: "thread",
+            filePath: archivedFile.path,
+            projectPath: nil,
+            modifiedAt: Date(timeIntervalSince1970: 0),
+            fileSize: 0,
+            storage: .archived
+        )
+
+        XCTAssertNoThrow(try source.unarchive(entry))
+    }
+
     func testDeleteRemovesJSONLFileWithinActiveRoot() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let activeRoot = root.appendingPathComponent("sessions")
@@ -345,6 +383,18 @@ private final class RecordingSessionCommandRunner: SessionCommandRunning {
     func run(executable: String, arguments: [String]) throws -> SessionCommandResult {
         commands.append((executable, arguments))
         return SessionCommandResult(status: 0, standardError: "")
+    }
+}
+
+private final class ClosureSessionCommandRunner: SessionCommandRunning {
+    private let operation: () throws -> SessionCommandResult
+
+    init(operation: @escaping () throws -> SessionCommandResult) {
+        self.operation = operation
+    }
+
+    func run(executable: String, arguments: [String]) throws -> SessionCommandResult {
+        try operation()
     }
 }
 

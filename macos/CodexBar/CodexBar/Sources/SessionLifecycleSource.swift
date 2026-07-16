@@ -77,7 +77,13 @@ struct SessionLifecycleSource: SessionLifecycleManaging {
     }
 
     func unarchive(_ entry: SessionIndexEntry) throws {
-        try run(operation: "unarchive", entry: entry)
+        do {
+            try run(operation: "unarchive", entry: entry)
+        } catch {
+            // Some Codex CLI versions move the JSONL back to sessions before
+            // returning a nonzero exit status for the stale active-path state.
+            guard restoredToActiveSessions(entry) else { throw error }
+        }
     }
 
     func delete(_ entry: SessionIndexEntry) throws {
@@ -107,6 +113,25 @@ struct SessionLifecycleSource: SessionLifecycleManaging {
     private func isWithinConfiguredRoot(_ fileURL: URL, rootURL: URL) -> Bool {
         let normalizedRoot = rootURL.resolvingSymlinksInPath().standardizedFileURL.path
         return fileURL.path.hasPrefix(normalizedRoot + "/")
+    }
+
+    private func restoredToActiveSessions(_ entry: SessionIndexEntry) -> Bool {
+        guard entry.storage == .archived,
+              !fileManager.fileExists(atPath: entry.filePath) else { return false }
+        let fileName = URL(fileURLWithPath: entry.filePath).lastPathComponent
+        guard let enumerator = fileManager.enumerator(
+            at: activeRootURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return false }
+        return enumerator.contains { item in
+            guard let fileURL = item as? URL,
+                  fileURL.lastPathComponent == fileName,
+                  let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]) else {
+                return false
+            }
+            return values.isRegularFile == true
+        }
     }
 }
 
