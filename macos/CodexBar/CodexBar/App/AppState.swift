@@ -59,6 +59,7 @@ final class AppState: ObservableObject {
     private let skillLifecycleSource: SkillLifecycleManaging
     private let tokenActivitySource: TokenActivitySource
     private let profileSnapshotStore: ProfileSnapshotStore
+    private let profileCardRecognizer: ProfileCardRecognizing
     private let settingsStore: SettingsStore
     private var refreshTask: Task<Void, Never>?
     private var quotaPollingTask: Task<Void, Never>?
@@ -74,7 +75,8 @@ final class AppState: ObservableObject {
         pluginSkillSource: PluginSkillSource = PluginSkillSource(),
         skillLifecycleSource: SkillLifecycleManaging = SkillLifecycleSource(),
         tokenActivitySource: TokenActivitySource = TokenActivitySource(),
-        profileSnapshotStore: ProfileSnapshotStore = ProfileSnapshotStore()
+        profileSnapshotStore: ProfileSnapshotStore = ProfileSnapshotStore(),
+        profileCardRecognizer: ProfileCardRecognizing = ProfileCardRecognizer()
     ) {
         self.usageSource = usageSource
         self.sessionSource = sessionSource
@@ -86,6 +88,7 @@ final class AppState: ObservableObject {
         self.skillLifecycleSource = skillLifecycleSource
         self.tokenActivitySource = tokenActivitySource
         self.profileSnapshotStore = profileSnapshotStore
+        self.profileCardRecognizer = profileCardRecognizer
         self.snapshots = snapshotStore.load()
         self.profileSnapshot = profileSnapshotStore.load()
         let settings = settingsStore.load()
@@ -186,6 +189,17 @@ final class AppState: ObservableObject {
             profileSnapshotError = nil
         } catch {
             profileSnapshotError = error.localizedDescription
+        }
+    }
+
+    func recognizeProfileSnapshot(imageData: Data) async -> ProfileSnapshotDraft? {
+        do {
+            let draft = try profileCardRecognizer.recognize(imageData: imageData)
+            profileSnapshotError = nil
+            return draft
+        } catch {
+            profileSnapshotError = error.localizedDescription
+            return nil
         }
     }
 

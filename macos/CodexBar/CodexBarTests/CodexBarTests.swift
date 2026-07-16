@@ -45,6 +45,21 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(state.profileSnapshot?.longestStreakDays, 31)
     }
 
+    @MainActor
+    func testRecognizeProfileSnapshotFailureDoesNotPersistOrPublishSnapshot() async {
+        let fileURL = profileSnapshotFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let store = ProfileSnapshotStore(fileURL: fileURL)
+        let state = AppState(profileSnapshotStore: store)
+
+        let draft = await state.recognizeProfileSnapshot(imageData: Data("not an image".utf8))
+
+        XCTAssertNil(draft)
+        XCTAssertNotNil(state.profileSnapshotError)
+        XCTAssertNil(store.load())
+        XCTAssertNil(state.profileSnapshot)
+    }
+
     func testProfileSnapshotStoreRoundTripsConfirmedValues() throws {
         let fileURL = profileSnapshotFileURL()
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
