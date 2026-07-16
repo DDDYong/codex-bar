@@ -804,12 +804,16 @@ private struct TokenActivityPanel: View {
         }
         .sheet(isPresented: $isReviewingDraft, onDismiss: discardDraft) {
             if let draft {
-                ProfileSnapshotReviewSheet(draft: draft) { confirmedDraft in
-                    appState.saveProfileSnapshot(confirmedDraft)
+                ProfileSnapshotReviewSheet(
+                    draft: draft,
+                    error: appState.profileSnapshotError,
+                    onConfirm: { confirmedDraft in
+                        appState.saveProfileSnapshot(confirmedDraft)
+                    },
+                    onCancel: {
                     discardDraft()
-                } onCancel: {
-                    discardDraft()
-                }
+                    }
+                )
             }
         }
     }
@@ -897,14 +901,16 @@ private struct ProfileSnapshotReviewSheet: View {
     @State private var peakDayTokens: String
     @State private var currentStreakDays: String
     @State private var longestStreakDays: String
-    let onConfirm: (ProfileSnapshotDraft) -> Void
+    let error: String?
+    let onConfirm: (ProfileSnapshotDraft) -> Bool
     let onCancel: () -> Void
 
-    init(draft: ProfileSnapshotDraft, onConfirm: @escaping (ProfileSnapshotDraft) -> Void, onCancel: @escaping () -> Void) {
-        _totalTokens = State(initialValue: draft.totalTokens.map(TokenFormatter.compact) ?? "官方快照未提供")
-        _peakDayTokens = State(initialValue: draft.peakDayTokens.map(TokenFormatter.compact) ?? "官方快照未提供")
-        _currentStreakDays = State(initialValue: draft.currentStreakDays.map { "\($0) 天" } ?? "官方快照未提供")
-        _longestStreakDays = State(initialValue: draft.longestStreakDays.map { "\($0) 天" } ?? "官方快照未提供")
+    init(draft: ProfileSnapshotDraft, error: String?, onConfirm: @escaping (ProfileSnapshotDraft) -> Bool, onCancel: @escaping () -> Void) {
+        _totalTokens = State(initialValue: draft.totalTokens.map(String.init) ?? "官方快照未提供")
+        _peakDayTokens = State(initialValue: draft.peakDayTokens.map(String.init) ?? "官方快照未提供")
+        _currentStreakDays = State(initialValue: draft.currentStreakDays.map(String.init) ?? "官方快照未提供")
+        _longestStreakDays = State(initialValue: draft.longestStreakDays.map(String.init) ?? "官方快照未提供")
+        self.error = error
         self.onConfirm = onConfirm
         self.onCancel = onCancel
     }
@@ -918,6 +924,9 @@ private struct ProfileSnapshotReviewSheet: View {
             field("峰值日", text: $peakDayTokens)
             field("当前连续", text: $currentStreakDays)
             field("最长连续", text: $longestStreakDays)
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
             HStack {
                 Button("取消") {
                     onCancel()
@@ -925,13 +934,9 @@ private struct ProfileSnapshotReviewSheet: View {
                 }
                 Spacer()
                 Button("确认保存") {
-                    onConfirm(ProfileSnapshotDraft(
-                        totalTokens: ProfileCardRecognizer.parseNumber(totalTokens),
-                        peakDayTokens: ProfileCardRecognizer.parseNumber(peakDayTokens),
-                        currentStreakDays: ProfileCardRecognizer.parseNumber(currentStreakDays),
-                        longestStreakDays: ProfileCardRecognizer.parseNumber(longestStreakDays)
-                    ))
-                    dismiss()
+                    if onConfirm(reviewDraft) {
+                        dismiss()
+                    }
                 }
                 .disabled(!isComplete)
             }
@@ -941,8 +946,16 @@ private struct ProfileSnapshotReviewSheet: View {
     }
 
     private var isComplete: Bool {
-        [totalTokens, peakDayTokens, currentStreakDays, longestStreakDays]
-            .allSatisfy { ProfileCardRecognizer.parseNumber($0) != nil }
+        reviewDraft.isReadyToSave
+    }
+
+    private var reviewDraft: ProfileSnapshotDraft {
+        ProfileSnapshotDraft(
+            totalTokens: ProfileCardRecognizer.parseNumber(totalTokens),
+            peakDayTokens: ProfileCardRecognizer.parseNumber(peakDayTokens),
+            currentStreakDays: ProfileCardRecognizer.parseNumber(currentStreakDays),
+            longestStreakDays: ProfileCardRecognizer.parseNumber(longestStreakDays)
+        )
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {

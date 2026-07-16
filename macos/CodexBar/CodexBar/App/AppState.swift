@@ -161,17 +161,14 @@ final class AppState: ObservableObject {
         snapshots = []
     }
 
-    func saveProfileSnapshot(_ draft: ProfileSnapshotDraft) {
-        guard let totalTokens = draft.totalTokens,
+    func saveProfileSnapshot(_ draft: ProfileSnapshotDraft) -> Bool {
+        guard draft.isReadyToSave,
+              let totalTokens = draft.totalTokens,
               let peakDayTokens = draft.peakDayTokens,
               let currentStreakDays = draft.currentStreakDays,
-              let longestStreakDays = draft.longestStreakDays,
-              totalTokens >= 0,
-              peakDayTokens >= 0,
-              currentStreakDays >= 0,
-              longestStreakDays >= 0 else {
+              let longestStreakDays = draft.longestStreakDays else {
             profileSnapshotError = "请确认四项资料均已识别"
-            return
+            return false
         }
 
         let snapshot = ProfileSnapshot(
@@ -187,8 +184,10 @@ final class AppState: ObservableObject {
             try profileSnapshotStore.save(snapshot)
             profileSnapshot = snapshot
             profileSnapshotError = nil
+            return true
         } catch {
             profileSnapshotError = error.localizedDescription
+            return false
         }
     }
 

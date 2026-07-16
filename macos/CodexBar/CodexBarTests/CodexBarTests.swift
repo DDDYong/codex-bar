@@ -26,23 +26,64 @@ final class CodexBarTests: XCTestCase {
     }
 
     @MainActor
-    func testSaveProfileSnapshotPublishesConfirmedDraft() {
+    func testSaveProfileSnapshotPreservesExactConfirmedDraftValues() {
         let fileURL = profileSnapshotFileURL()
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
         let state = AppState(profileSnapshotStore: ProfileSnapshotStore(fileURL: fileURL))
         let draft = ProfileSnapshotDraft(
-            totalTokens: 1_780_000_000,
-            peakDayTokens: 95_005_000,
+            totalTokens: 12_345_678,
+            peakDayTokens: 12_345_678,
             currentStreakDays: 17,
             longestStreakDays: 31
         )
 
-        state.saveProfileSnapshot(draft)
+        XCTAssertTrue(state.saveProfileSnapshot(draft))
 
-        XCTAssertEqual(state.profileSnapshot?.totalTokens, 1_780_000_000)
-        XCTAssertEqual(state.profileSnapshot?.peakDayTokens, 95_005_000)
+        XCTAssertEqual(state.profileSnapshot?.totalTokens, 12_345_678)
+        XCTAssertEqual(state.profileSnapshot?.peakDayTokens, 12_345_678)
         XCTAssertEqual(state.profileSnapshot?.currentStreakDays, 17)
         XCTAssertEqual(state.profileSnapshot?.longestStreakDays, 31)
+    }
+
+    func testProfileSnapshotDraftRequiresFourNonnegativeValuesBeforeSaving() {
+        XCTAssertTrue(ProfileSnapshotDraft(
+            totalTokens: 1,
+            peakDayTokens: 2,
+            currentStreakDays: 3,
+            longestStreakDays: 4
+        ).isReadyToSave)
+        XCTAssertFalse(ProfileSnapshotDraft(
+            totalTokens: 1,
+            peakDayTokens: nil,
+            currentStreakDays: 3,
+            longestStreakDays: 4
+        ).isReadyToSave)
+        XCTAssertFalse(ProfileSnapshotDraft(
+            totalTokens: -1,
+            peakDayTokens: 2,
+            currentStreakDays: 3,
+            longestStreakDays: 4
+        ).isReadyToSave)
+    }
+
+    @MainActor
+    func testSaveProfileSnapshotFailureKeepsDraftAvailableForReview() throws {
+        let blockingFileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: blockingFileURL) }
+        try Data().write(to: blockingFileURL)
+        let draft = ProfileSnapshotDraft(
+            totalTokens: 12_345_678,
+            peakDayTokens: 12_345_678,
+            currentStreakDays: 17,
+            longestStreakDays: 31
+        )
+        let state = AppState(profileSnapshotStore: ProfileSnapshotStore(
+            fileURL: blockingFileURL.appendingPathComponent("profile-snapshot.json")
+        ))
+
+        XCTAssertFalse(state.saveProfileSnapshot(draft))
+        XCTAssertNil(state.profileSnapshot)
+        XCTAssertNotNil(state.profileSnapshotError)
     }
 
     @MainActor
