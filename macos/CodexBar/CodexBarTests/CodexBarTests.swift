@@ -2,6 +2,55 @@ import XCTest
 @testable import CodexBar
 
 final class CodexBarTests: XCTestCase {
+    func testProfileSnapshotStoreRoundTripsConfirmedValues() throws {
+        let fileURL = profileSnapshotFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let record = ProfileSnapshot(
+            totalTokens: 1_780_000_000,
+            peakDayTokens: 95_005_000,
+            currentStreakDays: 17,
+            longestStreakDays: 31,
+            importedAt: Date(timeIntervalSince1970: 1_784_000_000),
+            sourceLabel: "Codex Profile 分享卡片"
+        )
+
+        try ProfileSnapshotStore(fileURL: fileURL).save(record)
+
+        let loaded = ProfileSnapshotStore(fileURL: fileURL).load()
+        XCTAssertEqual(loaded?.totalTokens, record.totalTokens)
+        XCTAssertEqual(loaded?.peakDayTokens, record.peakDayTokens)
+        XCTAssertEqual(loaded?.currentStreakDays, record.currentStreakDays)
+        XCTAssertEqual(loaded?.longestStreakDays, record.longestStreakDays)
+        XCTAssertEqual(loaded?.importedAt, record.importedAt)
+        XCTAssertEqual(loaded?.sourceLabel, record.sourceLabel)
+    }
+
+    func testProfileSnapshotStoreReturnsNilWhenFileIsMissing() {
+        let fileURL = profileSnapshotFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        XCTAssertNil(ProfileSnapshotStore(fileURL: fileURL).load())
+    }
+
+    func testProfileSnapshotStoreClearRemovesSavedSnapshot() throws {
+        let fileURL = profileSnapshotFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let record = ProfileSnapshot(
+            totalTokens: 1,
+            peakDayTokens: 2,
+            currentStreakDays: 3,
+            longestStreakDays: 4,
+            importedAt: Date(timeIntervalSince1970: 0),
+            sourceLabel: "Test"
+        )
+        let store = ProfileSnapshotStore(fileURL: fileURL)
+
+        try store.save(record)
+        try store.clear()
+
+        XCTAssertNil(store.load())
+    }
+
     func testDashboardContainsSevenStaticRoutes() {
         XCTAssertEqual(DashboardRoute.allCases.count, 7)
     }
@@ -484,6 +533,12 @@ final class CodexBarTests: XCTestCase {
 
     private func skillEntry(fileURL: URL) -> PluginSkillEntry {
         PluginSkillEntry(id: fileURL.path, kind: .skill, name: "review", detail: nil, path: fileURL.path)
+    }
+
+    private func profileSnapshotFileURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("profile-snapshot.json")
     }
 }
 
