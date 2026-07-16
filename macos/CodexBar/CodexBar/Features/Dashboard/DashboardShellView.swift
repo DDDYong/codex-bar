@@ -189,6 +189,8 @@ private struct PluginsSkillsView: View {
 private struct PluginSkillDetailSheet: View {
     let entry: PluginSkillEntry
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+    @State private var showsUninstallConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -205,10 +207,36 @@ private struct PluginSkillDetailSheet: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
             Text(entry.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            if let error = appState.skillOperationError {
+                Text("Skill 卸载失败：\(error)")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             Spacer()
             HStack {
                 Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)]) }
                 Spacer()
+                if entry.kind == .skill {
+                    Button(role: .destructive) { showsUninstallConfirmation = true } label: {
+                        if appState.skillOperationEntryID == entry.id {
+                            ProgressView()
+                        } else {
+                            Text("卸载 Skill")
+                        }
+                    }
+                    .disabled(appState.isOperatingOnSkill)
+                    .confirmationDialog("卸载 \(entry.name)？", isPresented: $showsUninstallConfirmation, titleVisibility: .visible) {
+                        Button("卸载", role: .destructive) {
+                            Task {
+                                await appState.uninstallSkill(entry)
+                                if appState.skillOperationError == nil { dismiss() }
+                            }
+                        }
+                        Button("取消", role: .cancel) {}
+                    } message: {
+                        Text("将永久删除 \(URL(fileURLWithPath: entry.path).deletingLastPathComponent().path)。")
+                    }
+                }
                 Button("关闭") { dismiss() }.keyboardShortcut(.defaultAction)
             }
         }

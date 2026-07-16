@@ -302,6 +302,30 @@ final class CodexBarTests: XCTestCase {
         XCTAssertFalse(state.isOperatingOnSession)
     }
 
+    @MainActor
+    func testUninstallSkillRefreshesIndexAfterSuccessfulLifecycleOperation() async {
+        let lifecycle = RecordingSkillLifecycleSource()
+        let state = AppState(skillLifecycleSource: lifecycle)
+        let entry = skillEntry(fileURL: URL(fileURLWithPath: "/tmp/review/SKILL.md"))
+
+        await state.uninstallSkill(entry)
+
+        XCTAssertEqual(lifecycle.uninstalledEntryIDs, [entry.id])
+        XCTAssertFalse(state.isOperatingOnSkill)
+        XCTAssertNil(state.skillOperationError)
+    }
+
+    @MainActor
+    func testUninstallSkillSurfacesLifecycleError() async {
+        let lifecycle = RecordingSkillLifecycleSource(error: TestLifecycleError.failed)
+        let state = AppState(skillLifecycleSource: lifecycle)
+
+        await state.uninstallSkill(skillEntry(fileURL: URL(fileURLWithPath: "/tmp/review/SKILL.md")))
+
+        XCTAssertEqual(state.skillOperationError, TestLifecycleError.failed.localizedDescription)
+        XCTAssertFalse(state.isOperatingOnSkill)
+    }
+
     func testUninstallSkillRemovesVerifiedSkillDirectory() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let skillRoot = root.appendingPathComponent("skills")
@@ -489,5 +513,19 @@ private final class RecordingLifecycleSource: SessionLifecycleManaging {
 
     func delete(_ entry: SessionIndexEntry) throws {
         if let error { throw error }
+    }
+}
+
+private final class RecordingSkillLifecycleSource: SkillLifecycleManaging {
+    private(set) var uninstalledEntryIDs: [String] = []
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
+    func uninstall(_ entry: PluginSkillEntry) throws {
+        if let error { throw error }
+        uninstalledEntryIDs.append(entry.id)
     }
 }

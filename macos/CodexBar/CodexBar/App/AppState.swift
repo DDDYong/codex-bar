@@ -42,6 +42,8 @@ final class AppState: ObservableObject {
     @Published private(set) var sessionOperationEntryID: String?
     @Published private(set) var pluginSkillEntries: [PluginSkillEntry] = []
     @Published private(set) var isIndexingPluginsSkills = false
+    @Published private(set) var skillOperationError: String?
+    @Published private(set) var skillOperationEntryID: String?
     @Published private(set) var tokenActivityStats: TokenActivityStats = .empty
     @Published private(set) var isIndexingTokenActivity = false
 
@@ -51,6 +53,7 @@ final class AppState: ObservableObject {
     private let sessionIndexSource: SessionIndexSource
     private let sessionLifecycleSource: SessionLifecycleManaging
     private let pluginSkillSource: PluginSkillSource
+    private let skillLifecycleSource: SkillLifecycleManaging
     private let tokenActivitySource: TokenActivitySource
     private let settingsStore: SettingsStore
     private var refreshTask: Task<Void, Never>?
@@ -65,6 +68,7 @@ final class AppState: ObservableObject {
         sessionIndexSource: SessionIndexSource = SessionIndexSource(),
         sessionLifecycleSource: SessionLifecycleManaging = SessionLifecycleSource(),
         pluginSkillSource: PluginSkillSource = PluginSkillSource(),
+        skillLifecycleSource: SkillLifecycleManaging = SkillLifecycleSource(),
         tokenActivitySource: TokenActivitySource = TokenActivitySource()
     ) {
         self.usageSource = usageSource
@@ -74,6 +78,7 @@ final class AppState: ObservableObject {
         self.sessionIndexSource = sessionIndexSource
         self.sessionLifecycleSource = sessionLifecycleSource
         self.pluginSkillSource = pluginSkillSource
+        self.skillLifecycleSource = skillLifecycleSource
         self.tokenActivitySource = tokenActivitySource
         self.snapshots = snapshotStore.load()
         let settings = settingsStore.load()
@@ -218,6 +223,23 @@ final class AppState: ObservableObject {
             sessionOperationError = error.localizedDescription
         }
         sessionOperationEntryID = nil
+    }
+
+    var isOperatingOnSkill: Bool {
+        skillOperationEntryID != nil
+    }
+
+    func uninstallSkill(_ entry: PluginSkillEntry) async {
+        guard skillOperationEntryID == nil else { return }
+        skillOperationEntryID = entry.id
+        skillOperationError = nil
+        do {
+            try skillLifecycleSource.uninstall(entry)
+            refreshPluginSkillIndex()
+        } catch {
+            skillOperationError = error.localizedDescription
+        }
+        skillOperationEntryID = nil
     }
 
     func refreshPluginSkillIndex() {
