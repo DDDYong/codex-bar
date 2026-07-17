@@ -164,7 +164,9 @@ final class AppState: ObservableObject {
     }
 
     private func refreshSessionActivity() {
-        sessionActivity = sessionSource.liveActivity()
+        let latestActivity = sessionSource.liveActivity()
+        guard latestActivity != sessionActivity else { return }
+        sessionActivity = latestActivity
     }
 
     func clearSnapshots() {

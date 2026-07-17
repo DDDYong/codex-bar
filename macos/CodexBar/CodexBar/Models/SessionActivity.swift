@@ -1,6 +1,6 @@
 import Foundation
 
-enum SessionActivity: String, Equatable {
+enum SessionActivity: String, Hashable {
     case running
     case waiting
     case completed

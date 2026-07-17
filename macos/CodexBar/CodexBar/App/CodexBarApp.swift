@@ -29,7 +29,7 @@ private struct CodexBarMenuIcon: View {
     let activity: SessionActivity
 
     var body: some View {
-        if let image = composedImage {
+        if let image = Self.images[activity] {
             Image(nsImage: image)
                 .frame(width: 20, height: 20)
         } else {
@@ -38,9 +38,21 @@ private struct CodexBarMenuIcon: View {
         }
     }
 
-    private var composedImage: NSImage? {
+    private static let images: [SessionActivity: NSImage] = {
         guard let url = Bundle.main.url(forResource: "menu-bar-icon-source", withExtension: "png"),
-              let source = NSImage(contentsOf: url) else { return nil }
+              let source = NSImage(contentsOf: url) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: [
+            SessionActivity.running,
+            .waiting,
+            .completed,
+            .failed,
+            .unknown
+        ].map { activity in
+            (activity, composedImage(from: source, activity: activity))
+        })
+    }()
+
+    private static func composedImage(from source: NSImage, activity: SessionActivity) -> NSImage {
         let image = NSImage(size: NSSize(width: 20, height: 20))
         image.lockFocus()
         source.draw(
@@ -49,13 +61,13 @@ private struct CodexBarMenuIcon: View {
             operation: .sourceOver,
             fraction: 1
         )
-        statusColor.setFill()
+        statusColor(for: activity).setFill()
         NSBezierPath(ovalIn: NSRect(x: 14.25, y: 0, width: 5, height: 5)).fill()
         image.unlockFocus()
         return image
     }
 
-    private var statusColor: NSColor {
+    private static func statusColor(for activity: SessionActivity) -> NSColor {
         switch activity {
         case .running: .systemYellow
         case .waiting: .systemOrange
