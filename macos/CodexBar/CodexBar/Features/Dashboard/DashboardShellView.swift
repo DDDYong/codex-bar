@@ -472,12 +472,11 @@ private struct DataSourcesView: View {
                     SourceStatusRow(name: "Reset", status: usage == nil ? "未就绪" : "可用", updatedAt: usage?.updatedAt, risk: "随 Usage 刷新解析，仅读取已使用的接口响应。", error: appState.usageError)
                     SourceStatusRow(name: "会话活动", status: appState.sessionActivity == .unknown ? "暂无活动" : "可用", updatedAt: appState.sessionActivity == .unknown ? nil : Date(), risk: "仅聚合近期事件类型，不保存或展示会话正文。", error: nil)
                     SourceStatusRow(name: "额度快照", status: appState.snapshots.isEmpty ? "暂无记录" : "可用", updatedAt: appState.snapshots.last?.capturedAt, risk: "仅保存剩余额度百分比、时间和 Reset 次数。", error: nil)
-                    SourceStatusRow(name: "本机活动日期", status: appState.tokenActivityStats.localRecordDays.isEmpty ? "未就绪" : "可用", updatedAt: appState.tokenActivityStats.localRecordDays.last, risk: "仅读取会话事件的时间戳，不读取或展示会话正文、Token 计数。", error: appState.tokenActivityStats.localRecordDays.isEmpty ? "尚未发现本机会话日期记录。" : nil)
+                    SourceStatusRow(name: "全设备 Token 活动", status: appState.profileSnapshot == nil ? "未就绪" : "可用", updatedAt: appState.profileSnapshot?.importedAt, risk: "通过本机 Codex app-server 读取汇总，不读取或保存认证凭据、会话正文或图片。", error: appState.profileSnapshotError)
                 }
             }
             .padding(22)
         }
-        .task { appState.refreshTokenActivity() }
     }
 }
 
@@ -539,6 +538,12 @@ private struct SettingsView: View {
                                 .init(title: "90 天", value: 90),
                                 .init(title: "180 天", value: 180)
                             ]
+                        )
+                    }
+                    SettingsRow(title: "Token 热力图周期") {
+                        SettingsDropdown(
+                            selection: binding(\.tokenHeatmapPeriod),
+                            options: TokenHeatmapPeriod.allCases.map { .init(title: $0.title, value: $0) }
                         )
                     }
                     SettingsRow(title: "会话元数据") { Toggle("", isOn: binding(\.sessionIndexEnabled)).labelsHidden() }
@@ -652,7 +657,7 @@ private struct SettingsDropdown<Value: Hashable>: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
-            .frame(width: 100, height: 36)
+            .frame(width: 120, height: 36)
             .background(PrototypePalette.shell.opacity(0.72), in: RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(PrototypePalette.line, lineWidth: 1))
         }
@@ -671,8 +676,8 @@ private struct SettingsDropdown<Value: Hashable>: View {
                                 Image(systemName: "checkmark")
                             }
                         }
-                        .padding(.horizontal, 8)
-                        .frame(width: 90, height: 30, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .frame(width: 100, height: 30, alignment: .leading)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -713,12 +718,16 @@ private struct ActivityTrendView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) { Text("活动统计").font(.title3.weight(.bold)); }
                     Spacer()
+                    Button(appState.isRefreshingProfileSnapshot ? "正在同步…" : "立即同步") {
+                        appState.refreshProfileSnapshot()
+                    }
+                    .disabled(appState.isRefreshingProfileSnapshot)
                     Button("导出快照") { exportSnapshots() }
                         .disabled(appState.snapshots.isEmpty)
                     Button("清空快照", role: .destructive) { confirmClear = true }
                         .disabled(appState.snapshots.isEmpty)
                 }
-                TokenActivityPanel(stats: appState.tokenActivityStats, isLoading: appState.isIndexingTokenActivity)
+                TokenActivityPanel()
                 if appState.snapshots.count < 2 {
                     UsageEmptyState(title: "暂无趋势数据", message: "至少需要两条额度快照后才能计算估算变化。", icon: "chart.line.uptrend.xyaxis")
                         .frame(height: 280)
@@ -748,7 +757,6 @@ private struct ActivityTrendView: View {
             }
             .padding(22)
         }
-        .task { appState.refreshTokenActivity() }
         .alert("清空全部额度快照？", isPresented: $confirmClear) {
             Button("取消", role: .cancel) {}
             Button("清空", role: .destructive) { appState.clearSnapshots() }
@@ -769,8 +777,6 @@ private struct ActivityTrendView: View {
 
 private struct TokenActivityPanel: View {
     @EnvironmentObject private var appState: AppState
-    let stats: TokenActivityStats
-    let isLoading: Bool
     @State private var isImporting = false
     @State private var draft: ProfileSnapshotDraft?
     @State private var isReviewingDraft = false
@@ -783,8 +789,6 @@ private struct TokenActivityPanel: View {
             }
 
             officialSnapshotSection
-            Divider().overlay(PrototypePalette.line)
-            localRecordSection
         }
         .padding(16)
         .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
@@ -820,28 +824,25 @@ private struct TokenActivityPanel: View {
 
     private var officialSnapshotSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("全设备官方快照").font(.headline)
             if let snapshot = appState.profileSnapshot {
                 HStack(spacing: 0) {
                     metric("累计 Token", TokenFormatter.compact(snapshot.totalTokens))
                     metric("峰值日", TokenFormatter.compact(snapshot.peakDayTokens))
+                    metric("最长任务", snapshot.longestTaskDurationSeconds.map(DurationFormatter.chinese) ?? "--")
                     metric("当前连续", "\(snapshot.currentStreakDays) 天")
                     metric("最长连续", "\(snapshot.longestStreakDays) 天")
                 }
                 .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                Text("来源：\(snapshot.sourceLabel) · 同步于 \(UIStamp.string(snapshot.importedAt))")
-                    .font(.caption).foregroundStyle(.secondary)
+                TokenActivityHeatmap(
+                    buckets: snapshot.dailyUsageBuckets,
+                    period: appState.tokenHeatmapPeriod
+                )
             } else {
-                Text("导入 Codex Profile 卡片以显示全设备官方数据")
+                Text("正在读取 Codex 全设备 Token 活动；首次同步可能需要几秒钟。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let error = appState.profileSnapshotError {
                 Text(error).font(.caption).foregroundStyle(.red)
-            }
-            HStack {
-                Button("更新官方快照") { isImporting = true }
-                Button("清除官方快照", role: .destructive) { appState.clearProfileSnapshot() }
-                    .disabled(appState.profileSnapshot == nil)
             }
         }
     }
@@ -853,32 +854,6 @@ private struct TokenActivityPanel: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
-    }
-
-    private var localRecordSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("本机 Mac 明细 · 仅此 Mac").font(.headline)
-            if isLoading {
-                ProgressView("正在发现本机记录日期…")
-            } else {
-                Text("本机发现记录的日期：\(stats.localRecordDays.count) 天")
-                    .font(.subheadline)
-                if stats.localRecordDays.isEmpty {
-                    Text("尚未发现带有效时间戳的本机记录。")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
-                        ForEach(stats.localRecordDays, id: \.self) { day in
-                            Text(UIStamp.dayString(day))
-                                .font(.caption2)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 5)
-                                .background(PrototypePalette.blue.opacity(0.18), in: RoundedRectangle(cornerRadius: 5))
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private func recognize(_ imageData: Data) {
@@ -895,10 +870,284 @@ private struct TokenActivityPanel: View {
     }
 }
 
+private struct TokenActivityHeatmap: View {
+    let buckets: [TokenActivityDay]
+    let period: TokenHeatmapPeriod
+    @State private var hoveredDay: HeatmapDay?
+    @State private var hoveredWeekIndex: Int?
+    @State private var displayMode: TokenActivityDisplayMode = .daily
+
+    private let gap: CGFloat = 3
+    private let tooltipInset: CGFloat = 6
+    private let heatmapAspectRatio: CGFloat = 6.127
+    private let maximumHeatmapHeight: CGFloat = 160
+
+    private var calendar: Calendar {
+        var calendar = Calendar.current
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        return calendar
+    }
+
+    var body: some View {
+        if buckets.isEmpty {
+            Text("暂无每日 Token 数据；下次自动同步后会显示热力图。")
+                .font(.caption).foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("每日 Token 热力图").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    HStack(spacing: 14) {
+                        ForEach(TokenActivityDisplayMode.allCases) { mode in
+                            Button(mode.title) {
+                                displayMode = mode
+                                hoveredDay = nil
+                                hoveredWeekIndex = nil
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption.weight(displayMode == mode ? .semibold : .regular))
+                            .foregroundStyle(displayMode == mode ? PrototypePalette.blue : .secondary)
+                        }
+                    }
+                    .accessibilityLabel("Token 活动维度")
+                    .padding(.trailing, 8)
+                    Text(period.title).font(.caption).foregroundStyle(.secondary)
+                }
+                GeometryReader { proxy in
+                    let columns = weekColumns
+                    let cellSize = max(8, min(16, (proxy.size.width - CGFloat(max(columns.count - 1, 0)) * gap) / CGFloat(max(columns.count, 1))))
+                    let gridHeight = 7 * cellSize + 6 * gap
+                    ZStack(alignment: .topLeading) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(alignment: .top, spacing: gap) {
+                                ForEach(columns.indices, id: \.self) { weekIndex in
+                                    VStack(spacing: gap) {
+                                        ForEach(Array(columns[weekIndex].enumerated()), id: \.offset) { _, day in
+                                            RoundedRectangle(cornerRadius: 3)
+                                                .fill(color(for: day))
+                                                .frame(width: cellSize, height: cellSize)
+                                                .contentShape(Rectangle())
+                                                .onHover { isHovering in
+                                                    if isHovering, day?.isInSelectedPeriod == true, day?.isFuture == false {
+                                                        hoveredDay = day
+                                                        hoveredWeekIndex = weekIndex
+                                                    } else if hoveredDay?.id == day?.id {
+                                                        hoveredDay = nil
+                                                        hoveredWeekIndex = nil
+                                                    }
+                                                }
+                                                .help(hoverHelp(for: day))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.top, tooltipInset)
+
+                        ForEach(monthMarkers(in: columns)) { marker in
+                            Text(marker.label)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .position(
+                                    x: min(max(14, CGFloat(marker.weekIndex) * (cellSize + gap) + 14), proxy.size.width - 14),
+                                    y: tooltipInset + gridHeight + 12
+                                )
+                        }
+
+                        if let hoveredDay, let hoveredWeekIndex {
+                            HeatmapHoverCard(day: hoveredDay, mode: displayMode)
+                                .fixedSize()
+                                .position(
+                                    x: min(max(120, CGFloat(hoveredWeekIndex) * (cellSize + gap) + cellSize / 2), proxy.size.width - 120),
+                                    y: 15
+                                )
+                        }
+                    }
+                }
+                .aspectRatio(heatmapAspectRatio, contentMode: .fit)
+                .frame(maxHeight: maximumHeatmapHeight)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var weekColumns: [[HeatmapDay?]] {
+        let today = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: today)
+        let daysSinceMonday = (weekday + 5) % 7
+        guard let currentWeekStart = calendar.date(byAdding: .day, value: -daysSinceMonday, to: today),
+              let canvasStart = calendar.date(byAdding: .day, value: -(52 * 7), to: currentWeekStart),
+              let selectedStart = calendar.date(byAdding: .day, value: -(period.dayCount - 1), to: today) else { return [] }
+        let tokensByDate = Dictionary(buckets.map { ($0.startDate, $0.tokens) }, uniquingKeysWith: max)
+        let formatter = Self.dateFormatter
+        let days = (0..<371).compactMap { offset -> HeatmapDay? in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: canvasStart) else { return nil }
+            let startDate = formatter.string(from: date)
+            return HeatmapDay(
+                startDate: startDate,
+                tokens: tokensByDate[startDate] ?? 0,
+                displayTokens: tokensByDate[startDate] ?? 0,
+                isInSelectedPeriod: date >= selectedStart && date <= today,
+                isFuture: date > today
+            )
+        }
+        let dailyColumns = stride(from: 0, to: days.count, by: 7).map { offset in
+            Array(days[offset..<(offset + 7)])
+        }
+        switch displayMode {
+        case .daily:
+            return dailyColumns
+        case .weekly:
+            return dailyColumns.map { week in
+                let total = week.compactMap { $0 }
+                    .filter { $0.isInSelectedPeriod && !$0.isFuture }
+                    .reduce(0) { $0 + $1.tokens }
+                return week.map { day in
+                    HeatmapDay(startDate: day.startDate, tokens: day.tokens, displayTokens: total, isInSelectedPeriod: day.isInSelectedPeriod, isFuture: day.isFuture)
+                }
+            }
+        case .cumulative:
+            var runningTotal = 0
+            let cumulativeDays = days.map { day -> HeatmapDay? in
+                if day.isInSelectedPeriod && !day.isFuture {
+                    runningTotal += day.tokens
+                    return HeatmapDay(startDate: day.startDate, tokens: day.tokens, displayTokens: runningTotal, isInSelectedPeriod: true, isFuture: false)
+                }
+                return day
+            }
+            return stride(from: 0, to: cumulativeDays.count, by: 7).map { offset in
+                Array(cumulativeDays[offset..<(offset + 7)])
+            }
+        }
+    }
+
+    private func color(for day: HeatmapDay?) -> Color {
+        guard let day else { return .clear }
+        guard !day.isFuture else { return .secondary.opacity(0.06) }
+        guard day.isInSelectedPeriod else { return .secondary.opacity(0.08) }
+        guard day.displayTokens > 0 else { return .secondary.opacity(0.12) }
+        let values = visibleDisplayValues.sorted()
+        let rank = values.lastIndex(where: { $0 <= day.displayTokens }).map { Double($0 + 1) / Double(values.count) } ?? 0
+        switch rank {
+        case ..<0.2: return PrototypePalette.blue.opacity(0.32)
+        case ..<0.4: return PrototypePalette.blue.opacity(0.48)
+        case ..<0.6: return PrototypePalette.blue.opacity(0.64)
+        case ..<0.8: return PrototypePalette.blue.opacity(0.80)
+        default: return PrototypePalette.blue.opacity(1)
+        }
+    }
+
+    private var visibleDisplayValues: [Int] {
+        weekColumns.flatMap { $0 }
+            .compactMap { $0 }
+            .filter { $0.isInSelectedPeriod && !$0.isFuture && $0.displayTokens > 0 }
+            .map(\.displayTokens)
+    }
+
+    private func monthMarkers(in columns: [[HeatmapDay?]]) -> [MonthMarker] {
+        columns.enumerated().compactMap { weekIndex, week in
+            guard let day = week.compactMap({ $0 }).first(where: { $0.startDate.hasSuffix("-01") }) else { return nil }
+            let parts = day.startDate.split(separator: "-")
+            guard parts.count > 1, let month = Int(parts[1]) else { return nil }
+            return MonthMarker(weekIndex: weekIndex, label: "\(month)月")
+        }
+    }
+
+    private func hoverHelp(for day: HeatmapDay?) -> String {
+        guard let day else { return "" }
+        guard !day.isFuture else { return "本周尚未到达的日期" }
+        guard day.isInSelectedPeriod else { return "不在当前展示周期" }
+        return heatmapText(for: day)
+    }
+
+    private func heatmapText(for day: HeatmapDay) -> String {
+        switch displayMode {
+        case .daily:
+            return "\(day.startDate) 使用了 \(TokenFormatter.compact(day.displayTokens)) 个 Token"
+        case .weekly:
+            return "截至 \(day.startDate)，本周累计 \(TokenFormatter.compact(day.displayTokens)) 个 Token"
+        case .cumulative:
+            return "截至 \(day.startDate)，累计 \(TokenFormatter.compact(day.displayTokens)) 个 Token"
+        }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
+private enum TokenActivityDisplayMode: String, CaseIterable, Identifiable {
+    case daily
+    case weekly
+    case cumulative
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .daily: "每日"
+        case .weekly: "每周"
+        case .cumulative: "累计"
+        }
+    }
+}
+
+private struct HeatmapDay: Identifiable {
+    let startDate: String
+    let tokens: Int
+    let displayTokens: Int
+    let isInSelectedPeriod: Bool
+    let isFuture: Bool
+
+    var id: String { startDate }
+}
+
+private struct MonthMarker: Identifiable {
+    let weekIndex: Int
+    let label: String
+
+    var id: Int { weekIndex }
+}
+
+private struct HeatmapHoverCard: View {
+    let day: HeatmapDay
+    let mode: TokenActivityDisplayMode
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(PrototypePalette.panel.opacity(0.98), in: Capsule())
+            .overlay(Capsule().stroke(PrototypePalette.line))
+            .shadow(color: .black.opacity(0.18), radius: 7, y: 3)
+    }
+
+    private var text: String {
+        switch mode {
+        case .daily:
+            return "\(day.startDate) 使用了 \(TokenFormatter.compact(day.displayTokens)) 个 Token"
+        case .weekly:
+            return "截至 \(day.startDate)，本周累计 \(TokenFormatter.compact(day.displayTokens)) 个 Token"
+        case .cumulative:
+            return "截至 \(day.startDate)，累计 \(TokenFormatter.compact(day.displayTokens)) 个 Token"
+        }
+    }
+}
+
 private struct ProfileSnapshotReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var totalTokens: String
     @State private var peakDayTokens: String
+    @State private var longestTaskDuration: String
     @State private var currentStreakDays: String
     @State private var longestStreakDays: String
     let error: String?
@@ -908,6 +1157,7 @@ private struct ProfileSnapshotReviewSheet: View {
     init(draft: ProfileSnapshotDraft, error: String?, onConfirm: @escaping (ProfileSnapshotDraft) -> Bool, onCancel: @escaping () -> Void) {
         _totalTokens = State(initialValue: draft.totalTokens.map(String.init) ?? "官方快照未提供")
         _peakDayTokens = State(initialValue: draft.peakDayTokens.map(String.init) ?? "官方快照未提供")
+        _longestTaskDuration = State(initialValue: draft.longestTaskDurationSeconds.map(DurationFormatter.chinese) ?? "官方快照未提供")
         _currentStreakDays = State(initialValue: draft.currentStreakDays.map(String.init) ?? "官方快照未提供")
         _longestStreakDays = State(initialValue: draft.longestStreakDays.map(String.init) ?? "官方快照未提供")
         self.error = error
@@ -922,6 +1172,7 @@ private struct ProfileSnapshotReviewSheet: View {
                 .font(.caption).foregroundStyle(.secondary)
             field("累计 Token", text: $totalTokens)
             field("峰值日", text: $peakDayTokens)
+            field("最长任务时长", text: $longestTaskDuration)
             field("当前连续", text: $currentStreakDays)
             field("最长连续", text: $longestStreakDays)
             if let error {
@@ -953,6 +1204,7 @@ private struct ProfileSnapshotReviewSheet: View {
         ProfileSnapshotDraft(
             totalTokens: ProfileCardRecognizer.parseNumber(totalTokens),
             peakDayTokens: ProfileCardRecognizer.parseNumber(peakDayTokens),
+            longestTaskDurationSeconds: ProfileCardRecognizer.parseDuration(longestTaskDuration),
             currentStreakDays: ProfileCardRecognizer.parseNumber(currentStreakDays),
             longestStreakDays: ProfileCardRecognizer.parseNumber(longestStreakDays)
         )
@@ -976,6 +1228,13 @@ private enum TokenFormatter {
 }
 
 private enum DurationFormatter {
+    static func chinese(_ value: Int) -> String {
+        let hours = value / 3_600
+        let minutes = (value % 3_600) / 60
+        if hours > 0 { return "\(hours)小时\(minutes)分" }
+        return "\(minutes)分"
+    }
+
     static func compact(_ value: TimeInterval) -> String {
         guard value > 0 else { return "--" }
         let components = DateComponentsFormatter()
@@ -1182,7 +1441,7 @@ private struct DashboardHomeView: View {
                             HStack(spacing: Layout.spacing) {
                                 DashboardTrendPanel(records: Array(appState.snapshots.suffix(30)))
                                     .frame(maxWidth: .infinity)
-                                TokenAvailabilityPanel()
+                                DashboardTokenActivityPanel(snapshot: appState.profileSnapshot)
                                     .frame(maxWidth: .infinity)
                             }
                             .frame(height: Layout.analyticsRowHeight)
@@ -1404,19 +1663,124 @@ private struct DashboardTrendPanel: View {
     }
 }
 
-private struct TokenAvailabilityPanel: View {
+private struct DashboardTokenActivityPanel: View {
+    let snapshot: ProfileSnapshot?
+    @State private var hoveredDay: TokenActivityDay?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack { Text("Token 活动").font(.headline); Spacer(); Text("精准数据不可用").font(.caption).foregroundStyle(.orange) }
-            Image(systemName: "chart.bar.xaxis").font(.system(size: 34)).foregroundStyle(.secondary)
-            Text("当前本机登录态与 Usage/Reset 接口不提供稳定、可解释的输入、输出、缓存或总 Token 字段。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("已保留左侧的额度快照估算趋势，绝不把估算数值写成精准 Token。")
-                .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Token 活动").font(.headline)
+                Spacer()
+                Text(syncStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let snapshot {
+                HStack(spacing: 0) {
+                    tokenMetric(TokenFormatter.compact(snapshot.totalTokens), "累计 Token")
+                    Divider().frame(height: 34)
+                    tokenMetric(TokenFormatter.compact(snapshot.peakDayTokens), "峰值日")
+                    Divider().frame(height: 34)
+                    tokenMetric(String(snapshot.currentStreakDays) + " 天", "当前连续")
+                }
+                recentUsageBars(snapshot.dailyUsageBuckets)
+            } else {
+                Text("正在读取 Codex 全设备 Token 活动；完成同步后将在此显示每日用量。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxHeight: .infinity, alignment: .center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(14)
         .background(.quaternary.opacity(0.52), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var syncStatus: String {
+        guard let snapshot else { return "等待同步" }
+        return "同步于 " + snapshot.importedAt.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func tokenMetric(_ value: String, _ title: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func recentUsageBars(_ buckets: [TokenActivityDay]) -> some View {
+        let recentDays = Array(buckets.suffix(7))
+        let maximum = max(recentDays.map(\.tokens).max() ?? 0, 1)
+        if recentDays.isEmpty {
+            Text("暂无每日 Token 明细")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Chart(recentDays) { day in
+                    BarMark(
+                        x: .value("日期", day.startDate),
+                        y: .value("Token", day.tokens),
+                        width: .fixed(10)
+                    )
+                    .foregroundStyle(PrototypePalette.blue)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .annotation(position: .top, alignment: .center) {
+                        if hoveredDay?.id == day.id {
+                            Text(TokenFormatter.compact(day.tokens))
+                                .font(.caption2.weight(.medium))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(PrototypePalette.panel.opacity(0.96), in: Capsule())
+                                .overlay(Capsule().stroke(PrototypePalette.line))
+                        }
+                    }
+            }
+                .chartYScale(domain: 0...maximum)
+                .chartXAxis {
+                    AxisMarks(values: recentDays.map(\.startDate)) { value in
+                        AxisTick()
+                        AxisValueLabel {
+                            if let date = value.as(String.self) {
+                                Text(String(date.suffix(5)))
+                            }
+                        }
+                        .font(.caption2)
+                    }
+                }
+                .chartYAxis(.hidden)
+                .chartPlotStyle { plotArea in
+                    plotArea.background(.clear)
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geometry in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case let .active(location):
+                                    let plotFrame = geometry[proxy.plotAreaFrame]
+                                    let relativeX = location.x - plotFrame.origin.x
+                                    if let startDate = proxy.value(atX: relativeX, as: String.self) {
+                                        hoveredDay = recentDays.first { $0.startDate == startDate }
+                                    }
+                                case .ended:
+                                    hoveredDay = nil
+                                }
+                            }
+                    }
+                }
+
+            .frame(height: 70)
+        }
     }
 }
 

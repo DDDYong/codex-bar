@@ -45,10 +45,10 @@ final class AppState: ObservableObject {
     @Published private(set) var skillOperationError: String?
     @Published private(set) var skillOperationEntryID: String?
     @Published private(set) var skillOperationFailureEntryID: String?
-    @Published private(set) var tokenActivityStats: TokenActivityStats = .empty
-    @Published private(set) var isIndexingTokenActivity = false
     @Published private(set) var profileSnapshot: ProfileSnapshot?
     @Published var profileSnapshotError: String?
+    @Published private(set) var isRefreshingProfileSnapshot = false
+    @Published private(set) var tokenHeatmapPeriod: TokenHeatmapPeriod
 
     private let usageSource: CodexUsageSource
     private let sessionSource: SessionActivitySource
@@ -57,13 +57,15 @@ final class AppState: ObservableObject {
     private let sessionLifecycleSource: SessionLifecycleManaging
     private let pluginSkillSource: PluginSkillSource
     private let skillLifecycleSource: SkillLifecycleManaging
-    private let tokenActivitySource: TokenActivitySource
     private let profileSnapshotStore: ProfileSnapshotStore
     private let profileCardRecognizer: ProfileCardRecognizing
+    private let profileActivitySource: CodexActivityReading
     private let settingsStore: SettingsStore
     private var refreshTask: Task<Void, Never>?
     private var quotaPollingTask: Task<Void, Never>?
     private var sessionPollingTask: Task<Void, Never>?
+    private var profileActivityPollingTask: Task<Void, Never>?
+    private var profileActivityRefreshTask: Task<Void, Never>?
 
     init(
         usageSource: CodexUsageSource = CodexUsageSource(),
@@ -74,9 +76,9 @@ final class AppState: ObservableObject {
         sessionLifecycleSource: SessionLifecycleManaging = SessionLifecycleSource(),
         pluginSkillSource: PluginSkillSource = PluginSkillSource(),
         skillLifecycleSource: SkillLifecycleManaging = SkillLifecycleSource(),
-        tokenActivitySource: TokenActivitySource = TokenActivitySource(),
         profileSnapshotStore: ProfileSnapshotStore = ProfileSnapshotStore(),
-        profileCardRecognizer: ProfileCardRecognizing = ProfileCardRecognizer()
+        profileCardRecognizer: ProfileCardRecognizing = ProfileCardRecognizer(),
+        profileActivitySource: CodexActivityReading = CodexActivitySource()
     ) {
         self.usageSource = usageSource
         self.sessionSource = sessionSource
@@ -86,14 +88,15 @@ final class AppState: ObservableObject {
         self.sessionLifecycleSource = sessionLifecycleSource
         self.pluginSkillSource = pluginSkillSource
         self.skillLifecycleSource = skillLifecycleSource
-        self.tokenActivitySource = tokenActivitySource
         self.profileSnapshotStore = profileSnapshotStore
         self.profileCardRecognizer = profileCardRecognizer
+        self.profileActivitySource = profileActivitySource
         self.snapshots = snapshotStore.load()
         self.profileSnapshot = profileSnapshotStore.load()
         let settings = settingsStore.load()
         self.displayMode = settings.displayMode
         self.theme = settings.theme
+        self.tokenHeatmapPeriod = settings.tokenHeatmapPeriod
     }
 
     var menuBarTitle: String {
@@ -104,12 +107,13 @@ final class AppState: ObservableObject {
         (currentUsage ?? lastSuccessfulUsage == nil ? 0 : 2)
             + (sessionActivity == .unknown ? 0 : 1)
             + (snapshots.isEmpty ? 0 : 1)
-            + (tokenActivityStats.localRecordDays.isEmpty ? 0 : 1)
+            + (profileSnapshot == nil ? 0 : 1)
     }
 
     func start() {
         guard quotaPollingTask == nil else { return }
         refresh()
+        refreshProfileSnapshot()
         refreshSessionActivity()
         quotaPollingTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -123,6 +127,13 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard !Task.isCancelled else { return }
                 self?.refreshSessionActivity()
+            }
+        }
+        profileActivityPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15 * 60 * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.refreshProfileSnapshot()
             }
         }
     }
@@ -174,6 +185,7 @@ final class AppState: ObservableObject {
         let snapshot = ProfileSnapshot(
             totalTokens: totalTokens,
             peakDayTokens: peakDayTokens,
+            longestTaskDurationSeconds: draft.longestTaskDurationSeconds,
             currentStreakDays: currentStreakDays,
             longestStreakDays: longestStreakDays,
             importedAt: Date(),
@@ -212,6 +224,37 @@ final class AppState: ObservableObject {
         }
     }
 
+    func refreshProfileSnapshot() {
+        guard profileActivityRefreshTask == nil else { return }
+        isRefreshingProfileSnapshot = true
+        let source = profileActivitySource
+        profileActivityRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.isRefreshingProfileSnapshot = false
+                self.profileActivityRefreshTask = nil
+            }
+            do {
+                let summary = try await source.fetchSummary()
+                let snapshot = ProfileSnapshot(
+                    totalTokens: summary.lifetimeTokens,
+                    peakDayTokens: summary.peakDailyTokens,
+                    longestTaskDurationSeconds: summary.longestRunningTurnSeconds,
+                    currentStreakDays: summary.currentStreakDays,
+                    longestStreakDays: summary.longestStreakDays,
+                    importedAt: Date(),
+                    sourceLabel: "Codex app-server 全设备同步",
+                    dailyUsageBuckets: summary.dailyUsageBuckets
+                )
+                try self.profileSnapshotStore.save(snapshot)
+                self.profileSnapshot = snapshot
+                self.profileSnapshotError = nil
+            } catch {
+                self.profileSnapshotError = error.localizedDescription
+            }
+        }
+    }
+
     func saveCurrentSnapshot() {
         guard let snapshot = currentUsage ?? lastSuccessfulUsage else { return }
         let settings = settingsStore.load()
@@ -229,6 +272,7 @@ final class AppState: ObservableObject {
     func updateSettings(_ settings: AppSettings) {
         displayMode = settings.displayMode
         theme = settings.theme
+        tokenHeatmapPeriod = settings.tokenHeatmapPeriod
         settingsStore.save(settings)
         if !settings.sessionIndexEnabled { sessionEntries = [] }
         if !settings.pluginSkillIndexEnabled { pluginSkillEntries = [] }
@@ -318,18 +362,6 @@ final class AppState: ObservableObject {
             guard let self else { return }
             self.pluginSkillEntries = entries
             self.isIndexingPluginsSkills = false
-        }
-    }
-
-    func refreshTokenActivity() {
-        guard !isIndexingTokenActivity else { return }
-        isIndexingTokenActivity = true
-        let source = tokenActivitySource
-        Task { [weak self] in
-            let stats = await Task.detached { source.scan() }.value
-            guard let self else { return }
-            self.tokenActivityStats = stats
-            self.isIndexingTokenActivity = false
         }
     }
 

@@ -13,7 +13,7 @@ enum DashboardRoute: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .dashboard: "仪表板"
+        case .dashboard: "仪表盘"
         case .usage: "额度与 Reset"
         case .activity: "活动统计"
         case .sessions: "Codex 会话"
@@ -25,7 +25,7 @@ enum DashboardRoute: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .dashboard: "原生仪表板将在真实数据源接入后显示额度与摘要。"
+        case .dashboard: "原生仪表盘将在真实数据源接入后显示额度与摘要。"
         case .usage: "Usage 与 Reset 数据将在 N2 和 N4 阶段接入。"
         case .activity: "活动趋势与统计将在快照能力完成后显示。"
         case .sessions: "会话索引将在 N7 阶段以只读方式接入。"

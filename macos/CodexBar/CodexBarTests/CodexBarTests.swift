@@ -2,6 +2,28 @@ import XCTest
 @testable import CodexBar
 
 final class CodexBarTests: XCTestCase {
+    func testCodexActivityParserReadsAllDeviceSummary() throws {
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "summary": [
+                "lifetimeTokens": 1_780_000_000,
+                "peakDailyTokens": 95_005_000,
+                "longestRunningTurnSec": 3_900,
+                "currentStreakDays": 17,
+                "longestStreakDays": 31
+            ],
+            "dailyUsageBuckets": [["startDate": "2026-07-13", "tokens": 51_902_000]]
+        ])
+
+        let summary = try CodexActivitySource.parseSummary(from: payload)
+
+        XCTAssertEqual(summary.lifetimeTokens, 1_780_000_000)
+        XCTAssertEqual(summary.peakDailyTokens, 95_005_000)
+        XCTAssertEqual(summary.longestRunningTurnSeconds, 3_900)
+        XCTAssertEqual(summary.currentStreakDays, 17)
+        XCTAssertEqual(summary.longestStreakDays, 31)
+        XCTAssertEqual(summary.dailyUsageBuckets, [TokenActivityDay(startDate: "2026-07-13", tokens: 51_902_000)])
+    }
+
     func testProfileCardParserExtractsLabeledChineseMetrics() throws {
         let draft = try ProfileCardRecognizer.parse(lines: [
             "17.8亿", "累计 Token", "9500.5万", "峰值日",
@@ -10,6 +32,7 @@ final class CodexBarTests: XCTestCase {
 
         XCTAssertEqual(draft.totalTokens, 1_780_000_000)
         XCTAssertEqual(draft.peakDayTokens, 95_005_000)
+        XCTAssertNil(draft.longestTaskDurationSeconds)
         XCTAssertEqual(draft.currentStreakDays, 17)
         XCTAssertEqual(draft.longestStreakDays, 31)
     }
@@ -23,6 +46,27 @@ final class CodexBarTests: XCTestCase {
         XCTAssertNil(draft.peakDayTokens)
         XCTAssertEqual(draft.currentStreakDays, 17)
         XCTAssertNil(draft.longestStreakDays)
+    }
+
+    func testProfileCardParserMatchesMetricsByCardPosition() throws {
+        let draft = ProfileCardRecognizer.parse(recognizedLines: [
+            RecognizedLine(text: "17.8亿", x: 0.15, y: 0.81),
+            RecognizedLine(text: "9500.5万", x: 0.32, y: 0.81),
+            RecognizedLine(text: "1小时5分", x: 0.49, y: 0.81),
+            RecognizedLine(text: "17天", x: 0.66, y: 0.81),
+            RecognizedLine(text: "31天", x: 0.83, y: 0.81),
+            RecognizedLine(text: "累计 Token 数", x: 0.15, y: 0.75),
+            RecognizedLine(text: "峰值 Token 数", x: 0.32, y: 0.75),
+            RecognizedLine(text: "最长任务时长", x: 0.49, y: 0.75),
+            RecognizedLine(text: "当前连续天数", x: 0.66, y: 0.75),
+            RecognizedLine(text: "最长连续天数", x: 0.83, y: 0.75)
+        ])
+
+        XCTAssertEqual(draft.totalTokens, 1_780_000_000)
+        XCTAssertEqual(draft.peakDayTokens, 95_005_000)
+        XCTAssertEqual(draft.longestTaskDurationSeconds, 3_900)
+        XCTAssertEqual(draft.currentStreakDays, 17)
+        XCTAssertEqual(draft.longestStreakDays, 31)
     }
 
     @MainActor
@@ -107,6 +151,7 @@ final class CodexBarTests: XCTestCase {
         let record = ProfileSnapshot(
             totalTokens: 1_780_000_000,
             peakDayTokens: 95_005_000,
+            longestTaskDurationSeconds: nil,
             currentStreakDays: 17,
             longestStreakDays: 31,
             importedAt: Date(timeIntervalSince1970: 1_784_000_000),
@@ -137,6 +182,7 @@ final class CodexBarTests: XCTestCase {
         let record = ProfileSnapshot(
             totalTokens: 1,
             peakDayTokens: 2,
+            longestTaskDurationSeconds: nil,
             currentStreakDays: 3,
             longestStreakDays: 4,
             importedAt: Date(timeIntervalSince1970: 0),
@@ -281,7 +327,8 @@ final class CodexBarTests: XCTestCase {
             theme: .dark,
             snapshotRetentionDays: 30,
             sessionIndexEnabled: false,
-            pluginSkillIndexEnabled: true
+            pluginSkillIndexEnabled: true,
+            tokenHeatmapPeriod: .threeMonths
         )
 
         store.save(settings)
@@ -586,29 +633,6 @@ final class CodexBarTests: XCTestCase {
 
         XCTAssertEqual(entries.map(\.kind), [.plugin, .mcp])
         XCTAssertEqual(entries.map(\.name), ["documents@openai-primary-runtime", "playwright"])
-    }
-
-    func testTokenActivitySourceReportsOnlyLocalRecordDates() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let events = [
-            "{\"timestamp\":\"2026-07-14T10:00:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":120}}}}",
-            "{\"timestamp\":\"2026-07-14T10:05:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":80}}}}",
-            "{\"timestamp\":\"2026-07-15T11:00:00Z\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":240}}}}",
-            "{\"timestamp\":\"not-a-timestamp\",\"payload\":{\"info\":{\"last_token_usage\":{\"total_tokens\":999}}}}"
-        ].joined(separator: "\n")
-        try Data(events.utf8).write(to: root.appendingPathComponent("thread.jsonl"))
-
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let stats = TokenActivitySource(rootURL: root, calendar: calendar).scan()
-
-        let expectedDays = ["2026-07-14T00:00:00Z", "2026-07-15T00:00:00Z"]
-            .compactMap { ISO8601DateFormatter().date(from: $0) }
-
-        XCTAssertEqual(stats.localRecordDays, expectedDays)
-        XCTAssertEqual(Mirror(reflecting: stats).children.compactMap(\.label), ["localRecordDays"])
     }
 
     private func snapshotRecord(capturedAt: Date, weekly: Double, short: Double) -> UsageSnapshotRecord {

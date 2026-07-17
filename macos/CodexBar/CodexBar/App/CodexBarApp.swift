@@ -130,7 +130,7 @@ private struct MenuBarContent: View {
 
         Divider()
 
-        Button("打开仪表板") {
+        Button("打开仪表盘") {
             appState.selectedRoute = .dashboard
             openWindow(id: AppConfiguration.dashboardWindowID)
             DispatchQueue.main.async {
