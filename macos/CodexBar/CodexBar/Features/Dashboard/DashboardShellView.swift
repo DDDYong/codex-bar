@@ -1,7 +1,129 @@
 import AppKit
 import Charts
-import ServiceManagement
 import SwiftUI
+
+// MARK: - ProviderIconHelper
+
+enum ProviderIconHelper {
+    static func icon(for providerType: ProviderType) -> NSImage? {
+        sourceIcon(for: providerType)?.menuBarSized()
+    }
+
+    static func icon(for providerType: ProviderType, size: CGFloat) -> NSImage? {
+        sourceIcon(for: providerType)?.resized(to: NSSize(width: size, height: size))
+    }
+
+    @ViewBuilder
+    static func iconView(for providerType: ProviderType, size: CGFloat = 20) -> some View {
+        if let nsImage = sourceIcon(for: providerType) {
+            Image(nsImage: nsImage)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+        } else {
+            Image(systemName: fallbackSymbol(for: providerType))
+                .font(.system(size: size * 0.8))
+                .frame(width: size, height: size)
+        }
+    }
+
+    private static func sourceIcon(for providerType: ProviderType) -> NSImage? {
+        let raw: NSImage? = {
+            switch providerType {
+            case .officialCodex:
+                return bundledIcon(named: "menu-bar-icon-source.png") ?? systemSymbol("brain.head.profile")
+            case .deepseek:
+                return bundledIcon(named: "deepseek-color.png")
+                    ?? bundledIcon(named: "deepseek-color")
+                    ?? systemSymbol("sparkles")
+            case .openRouter:
+                return systemSymbol("arrow.triangle.branch")
+            case .siliconFlow:
+                return systemSymbol("wave.3.right")
+            case .custom(let name):
+                let lower = name.lowercased()
+                return bundledIcon(named: "\(lower)-color.png")
+                    ?? bundledIcon(named: "\(lower)-color")
+                    ?? bundledIcon(named: "\(lower).png")
+                ?? systemSymbol("server.rack")
+            }
+        }()
+        return raw
+    }
+
+    private static func bundledIcon(named name: String) -> NSImage? {
+        let baseName = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+
+        if let path = Bundle.main.path(forResource: baseName, ofType: ext),
+           let image = NSImage(contentsOfFile: path) {
+            return image
+        }
+        if let image = NSImage(named: baseName) {
+            return image
+        }
+        // Fallback: look in Resources directory of source tree (dev mode)
+        if let srcRoot = ProcessInfo.processInfo.environment["SRCROOT"] {
+            let srcPath = "\(srcRoot)/CodexBar/Resources/\(name)"
+            if FileManager.default.fileExists(atPath: srcPath),
+               let image = NSImage(contentsOfFile: srcPath) {
+                return image
+            }
+        }
+        // Fallback: look in ~/.codex-bar/icons/
+        let localDir = NSHomeDirectory() + "/.codex-bar/icons"
+        let localPath = localDir + "/" + name
+        if FileManager.default.fileExists(atPath: localPath),
+           let image = NSImage(contentsOfFile: localPath) {
+            return image
+        }
+        return nil
+    }
+
+    private static func systemSymbol(_ name: String) -> NSImage {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage()
+    }
+
+    private static func fallbackSymbol(for providerType: ProviderType?) -> String {
+        switch providerType {
+        case .officialCodex: "brain.head.profile"
+        case .deepseek: "sparkles"
+        case .openRouter: "arrow.triangle.branch"
+        case .siliconFlow: "wave.3.right"
+        case .custom: "server.rack"
+        case nil: "questionmark.circle"
+        }
+    }
+}
+
+private extension NSImage {
+    static let menuBarIconSize = NSSize(width: 20, height: 20)
+
+    func menuBarSized() -> NSImage {
+        resized(to: Self.menuBarIconSize)
+    }
+
+    func resized(to targetSize: NSSize) -> NSImage {
+        guard size != targetSize, size.width > 0, size.height > 0 else { return self }
+        let resized = NSImage(size: targetSize)
+        resized.lockFocus()
+        let scaleX = targetSize.width / size.width
+        let scaleY = targetSize.height / size.height
+        let scale = min(scaleX, scaleY)
+        let drawWidth = size.width * scale
+        let drawHeight = size.height * scale
+        let drawRect = NSRect(
+            x: (targetSize.width - drawWidth) / 2,
+            y: (targetSize.height - drawHeight) / 2,
+            width: drawWidth,
+            height: drawHeight
+        )
+        draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1)
+        resized.unlockFocus()
+        return resized
+    }
+}
 
 struct DashboardShellView: View {
     @EnvironmentObject private var appState: AppState
@@ -466,16 +588,58 @@ private struct DataSourcesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HStack { VStack(alignment: .leading, spacing: 4) { Text("数据源").font(.title3.weight(.bold)); }; Spacer(); Text("\(appState.availableDataSourceCount) / 5 可用").font(.subheadline.weight(.semibold)).foregroundStyle(.green) }
+                HStack { VStack(alignment: .leading, spacing: 4) { Text("数据源").font(.title3.weight(.bold)); }; Spacer(); Text("\(appState.availableDataSourceCount) / \(appState.totalDataSourceCount) 可用").font(.subheadline.weight(.semibold)).foregroundStyle(.green) }
                 VStack(spacing: 12) {
-                    SourceStatusRow(name: "Usage", status: usage == nil ? "未就绪" : "可用", updatedAt: usage?.updatedAt, risk: "请求时短暂读取 Codex 认证文件；不会保存或显示凭据。", error: appState.usageError)
-                    SourceStatusRow(name: "Reset", status: usage == nil ? "未就绪" : "可用", updatedAt: usage?.updatedAt, risk: "随 Usage 刷新解析，仅读取已使用的接口响应。", error: appState.usageError)
-                    SourceStatusRow(name: "会话活动", status: appState.sessionActivity == .unknown ? "暂无活动" : "可用", updatedAt: appState.sessionActivity == .unknown ? nil : Date(), risk: "仅聚合近期事件类型，不保存或展示会话正文。", error: nil)
-                    SourceStatusRow(name: "额度快照", status: appState.snapshots.isEmpty ? "暂无记录" : "可用", updatedAt: appState.snapshots.last?.capturedAt, risk: "仅保存剩余额度百分比、时间和 Reset 次数。", error: nil)
-                    SourceStatusRow(name: "全设备 Token 活动", status: appState.profileSnapshot == nil ? "未就绪" : "可用", updatedAt: appState.profileSnapshot?.importedAt, risk: "通过本机 Codex app-server 读取汇总，不读取或保存认证凭据、会话正文或图片。", error: appState.profileSnapshotError)
+                    ForEach(appState.dataSourceStatuses, id: \.name) { status in
+                        SourceStatusRow(name: status.name, status: status.available ? "可用" : "未就绪", updatedAt: updatedAt(for: status.name), risk: riskDescription(for: status.name), error: errorDescription(for: status.name))
+                    }
                 }
             }
             .padding(22)
+        }
+    }
+
+    private func riskDescription(for name: String) -> String {
+        if let providerID = ProviderID.allCases.first(where: { $0.dataSourceName == name }) {
+            if providerID.isExperimental {
+                return "\(providerID.sourceDescription)。CodexBar 不保存该实验 Provider 的凭据。"
+            }
+            return "\(providerID.sourceDescription)。凭据仅从 macOS 钥匙串读取。"
+        }
+        return switch name {
+        case "Usage（ChatGPT 订阅）": "请求时短暂读取 Codex 认证文件。"
+        case "Reset": "独立尝试 Codex app-server 与 Reset 接口；仅短时使用新鲜且未到期的缓存。"
+        case "cc-switch 代理遥测": "仅在用户已启用 cc-switch 本地代理时，以只读方式聚合请求数、Token、状态码和成本字段；不读取提示词或响应正文。"
+        case "会话活动": "临时读取近期 JSONL 的有限前缀与尾部，只提取 Provider/模型元数据和事件类型；不保存或展示会话正文。"
+        case "额度快照": "保存官方额度、时间、Reset，以及同一采集周期成功刷新的第三方 Provider 聚合值；不保存凭据或原始响应。"
+        case "全设备 Token": "通过本机 Codex app-server 读取汇总。"
+        default: ""
+        }
+    }
+
+    private func errorDescription(for name: String) -> String? {
+        if let providerID = ProviderID.allCases.first(where: { $0.dataSourceName == name }) {
+            return appState.providerErrors[providerID]
+                ?? appState.providerSnapshots[providerID]?.issues.first.map { "部分降级：\($0)" }
+        }
+        return switch name {
+        case "Usage（ChatGPT 订阅）": appState.usageError
+        case "Reset": appState.resetCreditsError
+        case "cc-switch 代理遥测": appState.proxyUsageError
+        case "全设备 Token": appState.profileSnapshotError
+        default: nil
+        }
+    }
+
+    private func updatedAt(for name: String) -> Date? {
+        if let providerID = ProviderID.allCases.first(where: { $0.dataSourceName == name }) {
+            return appState.providerSnapshots[providerID]?.updatedAt
+        }
+        return switch name {
+        case "Usage（ChatGPT 订阅）": usage?.updatedAt
+        case "Reset": appState.resetCreditsUpdatedAt
+        default:
+            nil
         }
     }
 }
@@ -508,8 +672,6 @@ private struct SourceStatusRow: View {
 private struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var settings = AppSettings.default
-    @State private var launchAtLogin = false
-    @State private var startupError: String?
 
     var body: some View {
         ScrollView {
@@ -549,20 +711,34 @@ private struct SettingsView: View {
                     SettingsRow(title: "会话元数据") { Toggle("", isOn: binding(\.sessionIndexEnabled)).labelsHidden() }
                     SettingsRow(title: "插件与 Skills 元数据") { Toggle("", isOn: binding(\.pluginSkillIndexEnabled)).labelsHidden() }
                 }
+                ProviderSettingsSection()
                 SettingsSection(title: "隐私与安全") {
-                    SettingsRow(title: "会话正文") { SettingsValue("不读取") }
-                    SettingsRow(title: "认证凭据") { SettingsValue("不保存") }
+                    SettingsRow(title: "会话活动读取") {
+                        SettingsValue("有限、临时读取前缀与尾部，仅提取状态字段，不保存/展示正文")
+                    }
+                    SettingsRow(title: "第三方 API 凭据") { SettingsValue("仅存 macOS 钥匙串") }
                     SettingsRow(title: "本地数据") { SettingsValue("仅存于本机") }
                 }
                 SettingsSection(title: "启动") {
                     SettingsRow(title: "登录时启动 Codex Bar") {
-                        Toggle("", isOn: $launchAtLogin).labelsHidden().onChange(of: launchAtLogin) { enabled in setLaunchAtLogin(enabled) }
+                        Toggle("", isOn: Binding(
+                            get: { appState.launchAtLoginEnabled },
+                            set: appState.setLaunchAtLoginEnabled
+                        ))
+                        .labelsHidden()
                     }
-                    if let startupError { Text(startupError).font(.caption).foregroundStyle(.orange) }
+                    if let startupError = appState.launchAtLoginError {
+                        Text(startupError).font(.caption).foregroundStyle(.orange)
+                        if appState.launchAtLoginStatus == .requiresApproval {
+                            Button("打开系统登录项设置") {
+                                appState.openLoginItemsSettings()
+                            }
+                        }
+                    }
                 }
                 SettingsSection(title: "应用信息") {
                     SettingsRow(title: "版本") { SettingsValue(appVersion) }
-                    SettingsRow(title: "数据源") { SettingsValue("\(appState.availableDataSourceCount) / 5 可用") }
+                    SettingsRow(title: "数据源") { SettingsValue("\(appState.availableDataSourceCount) / \(appState.totalDataSourceCount) 可用") }
                 }
             }
             .frame(maxWidth: 560, alignment: .leading)
@@ -571,7 +747,7 @@ private struct SettingsView: View {
         }
         .task {
             settings = appState.settings()
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+            appState.reconcileLaunchAtLogin()
         }
     }
 
@@ -583,18 +759,6 @@ private struct SettingsView: View {
                 appState.updateSettings(settings)
             }
         )
-    }
-
-    private func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled { try SMAppService.mainApp.register() }
-            else { try SMAppService.mainApp.unregister() }
-            startupError = nil
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-        } catch {
-            startupError = "无法更新登录启动设置：\(error.localizedDescription)"
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-        }
     }
 
     private var appVersion: String {
@@ -627,7 +791,7 @@ private struct SettingsRow<Content: View>: View {
         HStack {
             Text(title)
             Spacer()
-            content.frame(width: 84, alignment: .trailing)
+            content.frame(width: 160, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
@@ -705,6 +869,8 @@ private struct SettingsValue: View {
         Text(value)
             .font(.subheadline)
             .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -1302,7 +1468,7 @@ private struct DashboardSidebar: View {
     private var lastUpdated: String { (appState.currentUsage ?? appState.lastSuccessfulUsage).map { UIStamp.string($0.updatedAt) } ?? "等待首次刷新" }
 
     private func badge(for route: DashboardRoute) -> String? {
-        switch route { case .sessions: return appState.sessionEntries.isEmpty ? nil : "\(appState.sessionEntries.count)"; case .pluginsSkills: return appState.pluginSkillEntries.isEmpty ? nil : "\(appState.pluginSkillEntries.count)"; case .dataSources: return "\(appState.availableDataSourceCount)/5"; default: return nil }
+        switch route { case .sessions: return appState.sessionEntries.isEmpty ? nil : "\(appState.sessionEntries.count)"; case .pluginsSkills: return appState.pluginSkillEntries.isEmpty ? nil : "\(appState.pluginSkillEntries.count)"; case .dataSources: return "\(appState.availableDataSourceCount)/\(appState.totalDataSourceCount)"; default: return nil }
     }
 
     private func themeButton(_ option: AppState.Theme, icon: String) -> some View {
@@ -1330,7 +1496,16 @@ private struct DashboardHeader: View {
                 Text("你好，端阳 👋")
                     .font(.title3.weight(.semibold))
                 HStack(spacing: 6) {
-                    Text(appState.currentUsage?.plan ?? "本机登录")
+                    if !appState.configuredProviderIDs.isEmpty {
+                        ProviderIconHelper.iconView(for: .officialCodex, size: 14)
+                        ForEach(appState.configuredProviderIDs) { providerID in
+                            ProviderIconHelper.iconView(for: providerID.providerType, size: 14)
+                        }
+                        Text((["ChatGPT"] + appState.configuredProviderIDs.map(\.displayName)).joined(separator: " + "))
+                            .lineLimit(1)
+                    } else {
+                        Text(appState.currentUsage?.plan ?? "本机登录")
+                    }
                     Text("实时同步")
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 5))
@@ -1341,6 +1516,9 @@ private struct DashboardHeader: View {
 
             Spacer()
 
+            headerButton(systemImage: "power", help: "退出 CodexBar", isSubtle: true) {
+                NSApplication.shared.terminate(nil)
+            }
             headerButton(systemImage: "arrow.clockwise", help: "立即刷新额度数据") {
                 appState.refresh()
             }
@@ -1357,16 +1535,22 @@ private struct DashboardHeader: View {
         }
     }
 
-    private func headerButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+    private func headerButton(
+        systemImage: String,
+        help: String,
+        isSubtle: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(isSubtle ? .secondary : .primary)
                 .frame(width: 42, height: 42)
                 .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
-        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(PrototypePalette.line))
+        .background(.white.opacity(isSubtle ? 0.035 : 0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(PrototypePalette.line.opacity(isSubtle ? 0.65 : 1)))
         .help(help)
     }
 }
@@ -1377,7 +1561,10 @@ private struct UsageContentView: View {
 
     var body: some View {
         Group {
-            if let snapshot = appState.currentUsage ?? appState.lastSuccessfulUsage {
+            let snapshot = appState.currentUsage ?? appState.lastSuccessfulUsage ?? appState.officialUsageSnapshot
+            if snapshot != nil
+                || !appState.effectiveEnabledProviderIDs.isEmpty
+                || !appState.orderedProviderSnapshots.isEmpty {
                 UsagePrototypePage(snapshot: snapshot)
             } else if appState.isRefreshing {
                 ProgressView("正在读取额度数据…").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1388,10 +1575,21 @@ private struct UsageContentView: View {
             }
         }
     }
+}
 
-    private func metric(_ title: String, value: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) { Label(title, systemImage: icon).foregroundStyle(.secondary); Text(value).font(.title2.weight(.semibold)) }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(16).background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+enum DashboardHomeLayout {
+    static let topCardSpacing: CGFloat = 12
+    static let contentPadding: CGFloat = 20
+    static let metricCircleDiameter: CGFloat = 64
+    static let providerGlyphDiameter: CGFloat = 40
+    static let usageMetricCircleDiameter: CGFloat = 106
+    static let usageProviderArtworkDiameter: CGFloat = 118
+
+    static func topCardWidth(containerWidth: CGFloat) -> CGFloat {
+        let availableWidth = containerWidth
+            - (contentPadding * 2)
+            - (topCardSpacing * 2)
+        return max(0, availableWidth / 3)
     }
 }
 
@@ -1399,8 +1597,8 @@ private struct DashboardHomeView: View {
     @EnvironmentObject private var appState: AppState
 
     private enum Layout {
-        static let spacing: CGFloat = 12
-        static let contentPadding: CGFloat = 20
+        static let spacing = DashboardHomeLayout.topCardSpacing
+        static let contentPadding = DashboardHomeLayout.contentPadding
         static let topCardsHeight: CGFloat = 134
         static let analyticsRowHeight: CGFloat = 170
         static let summaryRowMinimumHeight: CGFloat = 160
@@ -1410,10 +1608,17 @@ private struct DashboardHomeView: View {
         appState.currentUsage ?? appState.lastSuccessfulUsage
     }
 
+    private var officialSnapshot: CodexUsageSnapshot? {
+        appState.officialUsageSnapshot ?? appState.currentUsage ?? appState.lastSuccessfulUsage
+    }
+
     var body: some View {
         Group {
-            if let snapshot {
+            if snapshot != nil || !appState.orderedProviderSnapshots.isEmpty {
                 GeometryReader { geometry in
+                    let topCardWidth = DashboardHomeLayout.topCardWidth(
+                        containerWidth: geometry.size.width
+                    )
                     let summaryRowHeight = max(
                         Layout.summaryRowMinimumHeight,
                         geometry.size.height
@@ -1424,17 +1629,37 @@ private struct DashboardHomeView: View {
                     )
 
                     VStack(alignment: .leading, spacing: Layout.spacing) {
-                        HStack(alignment: .top, spacing: Layout.spacing) {
-                            QuotaMetricCard(
-                                title: "Week 额度",
-                                percentage: snapshot.weeklyWindow?.remainingPercent,
-                                accent: .blue,
-                                detail: resetDescription(snapshot.weeklyWindow?.resetsAt)
-                            )
-                            ResetMetricCard(credits: snapshot.resetCredits)
-                            ResetExpiryPanel(values: snapshot.resetCredits.expiresAt)
-                                .frame(maxWidth: .infinity)
+                        ScrollView(.horizontal) {
+                            HStack(alignment: .top, spacing: Layout.spacing) {
+                                if let official = officialSnapshot, official.weeklyWindow != nil {
+                                    QuotaMetricCard(
+                                        title: "Week 额度",
+                                        percentage: official.weeklyWindow?.remainingPercent,
+                                        accent: .blue,
+                                        detail: resetDescription(official.weeklyWindow?.resetsAt)
+                                    )
+                                    .frame(width: topCardWidth)
+                                }
+
+                                ForEach(appState.orderedProviderSnapshots) { providerSnapshot in
+                                    ProviderMetricsCard(
+                                        snapshot: providerSnapshot,
+                                        proxyUsage: appState.proxyUsageByProvider[providerSnapshot.providerID]
+                                    )
+                                        .frame(width: topCardWidth)
+                                }
+
+                                if let official = officialSnapshot {
+                                    ResetMetricCard(credits: official.resetCredits)
+                                        .frame(width: topCardWidth)
+                                    if appState.orderedProviderSnapshots.isEmpty {
+                                        ResetExpiryPanel(values: official.resetCredits.expiresAt)
+                                            .frame(width: topCardWidth)
+                                    }
+                                }
+                            }
                         }
+                        .scrollIndicators(.hidden)
                         .frame(height: Layout.topCardsHeight)
 
                         VStack(spacing: Layout.spacing) {
@@ -1507,8 +1732,8 @@ private struct QuotaMetricCard: View {
                     Circle().trim(from: 0, to: CGFloat((percentage ?? 0) / 100)).stroke(accent, style: StrokeStyle(lineWidth: 9, lineCap: .round)).rotationEffect(.degrees(-90))
                     VStack(spacing: 1) { Text(percentage.map { String(format: "%.0f%%", $0) } ?? "--").font(.title3.weight(.bold)); Text("剩余").font(.caption2).foregroundStyle(.secondary) }
                 }
-                .frame(width: 62, height: 62)
-                VStack(alignment: .leading, spacing: 5) {
+                .frame(width: DashboardHomeLayout.metricCircleDiameter, height: DashboardHomeLayout.metricCircleDiameter)
+                VStack(alignment: .leading, spacing: 3) {
                     Text("实时额度").font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 4) {
                         Text("下次重置: ")
@@ -1540,9 +1765,9 @@ private struct ResetMetricCard: View {
                         .font(.system(size: 30, weight: .bold))
                         .foregroundStyle(.black.opacity(0.78))
                 }
-                .frame(width: 62, height: 62)
+                .frame(width: DashboardHomeLayout.metricCircleDiameter, height: DashboardHomeLayout.metricCircleDiameter)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(credits.availableCount.map { "\($0) 次" } ?? "--").font(.title2.weight(.bold))
+                    Text(credits.availableCount.map { "\($0) 次" } ?? "未知").font(.title2.weight(.bold))
                     Text(credits.expiresAt.first.map { "最近到期: \(UIStamp.expiryString($0))" } ?? "暂无到期时间")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
@@ -1637,6 +1862,122 @@ private struct DashboardTopCard<Content: View>: View {
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 134, maxHeight: 134, alignment: .topLeading)
         .background(.quaternary.opacity(0.52), in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+enum DashboardProviderPresentation {
+    static func deepSeekUsageSummary(_ snapshot: ProviderFinancialSnapshot) -> String {
+        let lifetime = snapshot.spending.first { $0.period == .lifetime }
+        let used = lifetime.map { formatted($0.amount, currency: $0.currency) } ?? "--"
+        let total: String
+        if let balance = snapshot.balance, let lifetime {
+            total = formatted(balance.available + lifetime.amount, currency: lifetime.currency)
+        } else {
+            total = "--"
+        }
+        return "已用 \(used) · 累计 \(total)"
+    }
+
+    private static func formatted(_ amount: Double, currency: String) -> String {
+        MoneySnapshot(available: amount, currency: currency).formatted(amount)
+    }
+}
+
+private struct ProviderMetricsCard: View {
+    let snapshot: ProviderFinancialSnapshot
+    let proxyUsage: ProxyDailyUsage?
+
+    var body: some View {
+        DashboardTopCard(title: snapshot.providerID.dataSourceName, trailing: snapshot.coverage.displayName) {
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle().fill(.blue.opacity(0.15))
+                    ProviderIconHelper.iconView(
+                        for: snapshot.providerID.providerType,
+                        size: DashboardHomeLayout.providerGlyphDiameter
+                    )
+                }
+                .frame(width: DashboardHomeLayout.metricCircleDiameter, height: DashboardHomeLayout.metricCircleDiameter)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(primaryMetric)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(.blue)
+                    if snapshot.providerID == .deepseek {
+                        Text(DashboardProviderPresentation.deepSeekUsageSummary(snapshot))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        ForEach(Array(detailLines.prefix(2).enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Text("\(snapshot.source.displayName) · \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    private var primaryMetric: String {
+        if let balance = snapshot.balance {
+            return balance.formatted(balance.available)
+        }
+        if let budget = snapshot.budget {
+            return "Key 剩余 \(formatted(budget.remaining, currency: budget.currency))"
+        }
+        if let quota = snapshot.quotaWindows.first {
+            return "剩余 \(String(format: "%.0f%%", quota.remainingPercent))"
+        }
+        if let spending = snapshot.spending.first(where: { $0.period == .today }) ?? snapshot.spending.first {
+            return "已用 \(formatted(spending.amount, currency: spending.currency))"
+        }
+        return "指标已连接"
+    }
+
+    private var detailLines: [String] {
+        var lines: [String] = []
+        if let issue = snapshot.issues.first {
+            lines.append("部分降级：\(issue)")
+        }
+        if let balance = snapshot.balance {
+            if let purchased = balance.purchased {
+                lines.append("累计购买 \(balance.formatted(purchased))")
+            } else if let toppedUp = balance.toppedUp, let granted = balance.granted {
+                lines.append("充值 \(balance.formatted(toppedUp)) · 赠送 \(balance.formatted(granted))")
+            }
+        }
+        if let spending = snapshot.spending.first(where: { $0.period == .today }) {
+            lines.append("今日消费 \(formatted(spending.amount, currency: spending.currency))")
+        } else if let spending = snapshot.spending.first(where: { $0.period == .lifetime }) {
+            lines.append("累计已用 \(formatted(spending.amount, currency: spending.currency))")
+        }
+        if let budget = snapshot.budget {
+            lines.append("Key 预算 \(formatted(budget.limit, currency: budget.currency)) · \(budget.resetPeriod.displayName)")
+        }
+        if let quota = snapshot.quotaWindows.first {
+            if let used = quota.usedCount, let total = quota.totalCount {
+                lines.append("\(quota.name) \(used.formatted()) / \(total.formatted())")
+            } else {
+                lines.append("\(quota.name) 剩余 \(String(format: "%.0f%%", quota.remainingPercent))")
+            }
+        }
+        if let proxyUsage {
+            lines.append("今日代理 \(proxyUsage.requestCount) 次 · \(proxyUsage.totalTokens.formatted()) Token")
+        }
+        if lines.isEmpty {
+            lines.append("Provider 未返回消费或 Token 明细")
+        }
+        return lines
+    }
+
+    private func formatted(_ amount: Double, currency: String) -> String {
+        MoneySnapshot(available: amount, currency: currency).formatted(amount)
     }
 }
 
@@ -1843,69 +2184,286 @@ private struct DashboardPluginCounts: View {
 
 private struct UsageEmptyState: View { let title: String; let message: String; let icon: String; var body: some View { VStack(spacing: 12) { Image(systemName: icon).font(.largeTitle).foregroundStyle(.secondary); Text(title).font(.headline); Text(message).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity) } }
 
+enum UsagePageLayout {
+    enum ResetPlacement: Equatable {
+        case besideChatGPT
+        case besideAPITrend
+        case fullWidth
+    }
+
+    static func resetPlacement(
+        enabledProviderIDs: Set<ProviderID>,
+        hasDeepSeekSnapshot: Bool
+    ) -> ResetPlacement {
+        if enabledProviderIDs.isEmpty {
+            return .besideChatGPT
+        }
+        if enabledProviderIDs.contains(.deepseek) || hasDeepSeekSnapshot {
+            return .besideAPITrend
+        }
+        return .fullWidth
+    }
+}
+
 private struct UsagePrototypePage: View {
     @EnvironmentObject private var appState: AppState
-    let snapshot: CodexUsageSnapshot
+    let snapshot: CodexUsageSnapshot?
+
+    private var deepSeekSnapshot: ProviderFinancialSnapshot? {
+        appState.providerSnapshots[.deepseek]
+    }
+
+    private var enabledProviderIDs: Set<ProviderID> {
+        appState.effectiveEnabledProviderIDs
+    }
+
+    private var resetPlacement: UsagePageLayout.ResetPlacement {
+        UsagePageLayout.resetPlacement(
+            enabledProviderIDs: enabledProviderIDs,
+            hasDeepSeekSnapshot: deepSeekSnapshot != nil
+        )
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) { Text("额度与 Reset").font(.title3.weight(.bold)); }
+                    Text("额度与 Reset").font(.title3.weight(.bold))
                     Spacer()
                     Button("导出记录") { exportSnapshots() }.buttonStyle(.bordered)
-                    Button("保存快照") { appState.saveCurrentSnapshot() }.buttonStyle(.borderedProminent)
+                    Button("保存快照") { appState.saveCurrentSnapshot() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(snapshot == nil)
                 }
-                HStack(spacing: 12) {
-                    UsageSummaryCard(title: "Week 剩余额度", value: snapshot.weeklyWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--", note: "实时 Usage")
-                    UsageSummaryCard(title: "可用 Reset", value: snapshot.resetCredits.availableCount.map { "\($0) 次" } ?? "--", note: "每次均有独立到期时间")
-                    UsageSummaryCard(title: "最后刷新", value: UIStamp.string(snapshot.updatedAt), note: "同一刷新链路")
+
+                switch resetPlacement {
+                case .besideChatGPT:
+                    LazyVGrid(columns: usageColumns, spacing: 14) {
+                        chatGPTCard
+                        resetExpiryCard
+                    }
+                case .besideAPITrend:
+                    providerSummaryGrid
+                    LazyVGrid(columns: usageColumns, spacing: 14) {
+                        resetExpiryCard
+                        UsageAPITrendCard(snapshot: deepSeekSnapshot)
+                    }
+                case .fullWidth:
+                    providerSummaryGrid
+                    resetExpiryCard
                 }
-                HStack(alignment: .top, spacing: 12) {
-                    UsageResetExpiryCard(values: snapshot.resetCredits.expiresAt)
-                        .frame(maxWidth: .infinity)
-                    UsageQuotaCycleCard(window: snapshot.weeklyWindow)
-                        .frame(maxWidth: .infinity)
-                }
-                .frame(height: 132)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("历史快照").font(.headline).padding(15)
-                    Divider().overlay(PrototypePalette.line)
-                    if appState.snapshots.isEmpty { Text("尚无本地快照记录。").font(.caption).foregroundStyle(.secondary).padding(15) }
-                    else { ForEach(appState.snapshots.suffix(8).reversed()) { record in
-                        HStack { Text(UIStamp.string(record.capturedAt)); Spacer(); Text(String(format: "Week %.1f%%", record.weeklyRemainingPercent)); Spacer(); Text(record.resetCredits.map { "\($0) 次" } ?? "--"); Spacer(); Text("UsageSource").foregroundStyle(.secondary) }.font(.caption).padding(.horizontal, 15).padding(.vertical, 10); Divider().overlay(PrototypePalette.line)
-                    } }
-                }
-                .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
+
+                UsageUnifiedHistoryCard(records: Array(appState.snapshots.suffix(8).reversed()))
             }
             .padding(22)
         }
     }
 
+    private var chatGPTCard: some View {
+        UsageChatGPTSubscriptionCard(
+            snapshot: snapshot,
+            error: appState.officialUsageError,
+            isRefreshing: appState.isRefreshing
+        )
+    }
+
+    private var resetExpiryCard: some View {
+        UsageResetExpiryCard(
+            values: snapshot?.resetCredits.expiresAt ?? [],
+            availableCount: snapshot?.resetCredits.availableCount
+        )
+    }
+
+    private var providerSummaryGrid: some View {
+        LazyVGrid(columns: usageColumns, spacing: 14) {
+            chatGPTCard
+            ForEach(ProviderID.allCases.filter { enabledProviderIDs.contains($0) }) { providerID in
+                UsageProviderCard(
+                    providerID: providerID,
+                    snapshot: appState.providerSnapshots[providerID],
+                    error: appState.providerErrors[providerID],
+                    isRefreshing: appState.refreshingProviderIDs.contains(providerID)
+                )
+            }
+        }
+    }
+
+    private var usageColumns: [GridItem] {
+        [
+            GridItem(.flexible(minimum: 280), spacing: 14),
+            GridItem(.flexible(minimum: 280), spacing: 14)
+        ]
+    }
+
     private func exportSnapshots() { guard let data = appState.exportedSnapshots() else { return }; let panel = NSSavePanel(); panel.nameFieldStringValue = "codex-bar-usage-snapshots.json"; panel.allowedContentTypes = [.json]; guard panel.runModal() == .OK, let url = panel.url else { return }; try? data.write(to: url, options: .atomic) }
+}
+
+private struct UsageChatGPTSubscriptionCard: View {
+    let snapshot: CodexUsageSnapshot?
+    let error: String?
+    let isRefreshing: Bool
+
+    private var remainingPercent: Double? { snapshot?.weeklyWindow?.remainingPercent }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ChatGPT 订阅").font(.headline)
+            HStack(spacing: 20) {
+                ZStack {
+                    Circle().stroke(.blue.opacity(0.15), lineWidth: 10)
+                    Circle()
+                        .trim(from: 0, to: CGFloat((remainingPercent ?? 0) / 100))
+                        .stroke(.blue, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    VStack(spacing: 2) {
+                        Text("Week 剩余额度").font(.caption2).foregroundStyle(.secondary)
+                        Text(remainingPercent.map { String(format: "%.0f%%", $0) } ?? "--")
+                            .font(.title.weight(.bold))
+                            .foregroundStyle(.blue)
+                    }
+                }
+                .frame(width: DashboardHomeLayout.usageMetricCircleDiameter, height: DashboardHomeLayout.usageMetricCircleDiameter)
+
+                VStack(spacing: 0) {
+                    metricRow(
+                        icon: "arrow.counterclockwise",
+                        title: "可用 Reset",
+                        value: snapshot?.resetCredits.availableCount.map { "\($0) 次" } ?? "未知"
+                    )
+                    Divider().overlay(PrototypePalette.line)
+                    metricRow(
+                        icon: "clock",
+                        title: "下次重置",
+                        value: snapshot?.weeklyWindow?.resetsAt.map(UIStamp.expiryString)
+                            ?? (isRefreshing ? "查询中…" : (error ?? "暂未提供"))
+                    )
+                }
+            }
+        }
+        .usagePanel(height: 178)
+    }
+
+    private func metricRow(icon: String, title: String, value: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).foregroundStyle(.secondary).frame(width: 16)
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+    }
+}
+
+private struct UsageProviderCard: View {
+    let providerID: ProviderID
+    let snapshot: ProviderFinancialSnapshot?
+    let error: String?
+    let isRefreshing: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("\(providerID.displayName) 指标").font(.headline)
+                Spacer()
+                Text(snapshot == nil ? (isRefreshing ? "查询中" : "不可用") : "正常")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(snapshot == nil ? .orange : .green)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background((snapshot == nil ? Color.orange : .green).opacity(0.14), in: RoundedRectangle(cornerRadius: 7))
+            }
+
+            if let snapshot {
+                HStack(spacing: 22) {
+                    ProviderIconHelper.iconView(
+                        for: providerID.providerType,
+                        size: DashboardHomeLayout.usageProviderArtworkDiameter
+                    )
+                    .frame(
+                        width: DashboardHomeLayout.usageMetricCircleDiameter,
+                        height: DashboardHomeLayout.usageMetricCircleDiameter
+                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("可用余额").font(.caption).foregroundStyle(.secondary)
+                        Text(availableBalance(snapshot)).font(.title.weight(.bold)).foregroundStyle(.blue)
+                        Text("今日消费 \(todaySpend(snapshot)) · 今日用量 \(todayTokens(snapshot))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Text(providerSummary(snapshot))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                Text(isRefreshing ? "正在读取 \(providerID.displayName) 指标…" : (error ?? "尚未取得 Provider 指标。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            }
+        }
+        .usagePanel(height: 178)
+    }
+
+    private func availableBalance(_ snapshot: ProviderFinancialSnapshot) -> String {
+        guard let balance = snapshot.balance else { return "--" }
+        return balance.formatted(balance.available)
+    }
+
+    private func todaySpend(_ snapshot: ProviderFinancialSnapshot) -> String {
+        guard let spend = snapshot.spending.first(where: { $0.period == .today }) else { return "--" }
+        return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+    }
+
+    private func todayTokens(_ snapshot: ProviderFinancialSnapshot) -> String {
+        guard let tokens = snapshot.tokens else { return "--" }
+        return TokenFormatter.compact(tokens.input + tokens.output)
+    }
+
+    private func providerSummary(_ snapshot: ProviderFinancialSnapshot) -> String {
+        if providerID == .deepseek {
+            return DashboardProviderPresentation.deepSeekUsageSummary(snapshot)
+        }
+        return "来源：\(snapshot.source.displayName) · \(snapshot.coverage.displayName)"
+    }
 }
 
 private struct UsageResetExpiryCard: View {
     let values: [String]
+    let availableCount: UInt64?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Reset 到期列表").font(.headline)
+                Text("Reset 与周期").font(.headline)
                 Spacer()
-                Text("\(values.count) 条").font(.caption).foregroundStyle(.secondary)
+                Text(availableCount.map { "Reset \($0)次" } ?? "Reset 未知")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
             }
-//            HStack {
-//                Text("序号").frame(width: 22)
-//                Text("到期时间")
-//                Spacer()
-//                Text("剩余时间").frame(width: 42, alignment: .trailing)
-//                Text("状态").frame(width: 54, alignment: .trailing)
-//            }
-//            .font(.caption2.weight(.semibold))
-//            .foregroundStyle(.secondary)
+
+            HStack {
+                Text("序号").frame(width: 28)
+                Text("到期时间")
+                Spacer()
+                Text("剩余").frame(width: 44, alignment: .trailing)
+                Text("状态").frame(width: 58, alignment: .trailing)
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+
             ScrollView {
                 LazyVStack(spacing: 5) {
+                    if values.isEmpty {
+                        Text(availableCount == nil ? "Reset 数据未知" : "暂无 Reset 到期记录")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 70)
+                    }
                     ForEach(Array(values.enumerated()), id: \.offset) { index, value in
                         HStack(spacing: 12) {
                             Text("\(index + 1)")
@@ -1933,54 +2491,192 @@ private struct UsageResetExpiryCard: View {
             }
             .scrollIndicators(.hidden)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132, alignment: .top)
-        .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(PrototypePalette.line))
+        .usagePanel(height: 178)
     }
 }
 
-private struct UsageQuotaCycleCard: View {
-    let window: CodexUsageWindow?
+private struct UsageAPITrendCard: View {
+    let snapshot: ProviderFinancialSnapshot?
+
+    private var dailyRows: [ProviderDailyUsageSnapshot] {
+        Array((snapshot?.dailyUsage ?? []).filter { $0.cost != nil }.suffix(7))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("额度与周期").font(.headline)
+                Text("API 消费趋势").font(.headline)
                 Spacer()
-                Text(window.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.blue)
+                Text("近 7 日").font(.caption).foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Week 额度").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                }
-                ProgressView(value: window?.remainingPercent ?? 0, total: 100).tint(.blue)
+
+            HStack(spacing: 0) {
+                trendMetric("今日消费", value: todaySpend)
+                Divider().frame(height: 36).overlay(PrototypePalette.line)
+                trendMetric("今日用量", value: todayTokens)
+                Divider().frame(height: 36).overlay(PrototypePalette.line)
+                trendMetric("累计消费", value: lifetimeSpend)
             }
-            Divider().overlay(PrototypePalette.line)
-            HStack {
-                Text("下一次重置").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Text(window?.resetsAt.map(UIStamp.expiryString) ?? "暂未提供")
+
+            if dailyRows.isEmpty {
+                Text("当前数据源尚未返回按日消费，不绘制模拟趋势。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                Chart(dailyRows) { row in
+                    BarMark(
+                        x: .value("日期", shortDate(row.date)),
+                        y: .value("消费", row.cost ?? 0)
+                    )
+                    .foregroundStyle(.blue.gradient)
+                    .cornerRadius(3)
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisGridLine().foregroundStyle(PrototypePalette.line)
+                        AxisValueLabel {
+                            if let amount = value.as(Double.self) { Text("¥\(amount, specifier: "%.0f")") }
+                        }
+                    }
+                }
+                .chartXAxis { AxisMarks { AxisValueLabel() } }
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132, alignment: .topLeading)
-        .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(PrototypePalette.line))
+        .usagePanel(height: 178)
+    }
+
+    private var todaySpend: String {
+        guard let spend = snapshot?.spending.first(where: { $0.period == .today }) else { return "--" }
+        return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+    }
+
+    private var todayTokens: String {
+        guard let tokens = snapshot?.tokens else { return "--" }
+        return TokenFormatter.compact(tokens.input + tokens.output)
+    }
+
+    private var lifetimeSpend: String {
+        guard let spend = snapshot?.spending.first(where: { $0.period == .lifetime }) else { return "--" }
+        return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+    }
+
+    private func trendMetric(_ title: String, value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.subheadline.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func shortDate(_ value: String) -> String {
+        String(value.suffix(5))
     }
 }
 
-private struct UsageSummaryCard: View {
-    let title: String
-    let value: String
-    let note: String
-    var body: some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.caption).foregroundStyle(.secondary); Text(value).font(.title2.weight(.bold)); Text(note).font(.caption2).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, minHeight: 94, alignment: .leading).padding(15).background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14)) }
+struct UsageHistoryProviderValues: Equatable {
+    let available: String
+    let todaySpend: String
+    let todayTokens: String
+}
+
+enum UsageHistoryPresentation {
+    static func providerValues(_ record: ProviderUsageSnapshotRecord?) -> UsageHistoryProviderValues {
+        guard let record else {
+            return UsageHistoryProviderValues(available: "--", todaySpend: "--", todayTokens: "--")
+        }
+        guard !record.isStale else {
+            return UsageHistoryProviderValues(available: "陈旧", todaySpend: "--", todayTokens: "--")
+        }
+        return UsageHistoryProviderValues(
+            available: formatted(record.available, currency: record.currency),
+            todaySpend: formatted(record.todaySpend, currency: record.currency),
+            todayTokens: record.todayTokens.map(TokenFormatter.compact) ?? "--"
+        )
+    }
+
+    private static func formatted(_ value: Double?, currency: String?) -> String {
+        guard let value, let currency else { return "--" }
+        return MoneySnapshot(available: value, currency: currency).formatted(value)
+    }
+}
+
+private struct UsageUnifiedHistoryCard: View {
+    let records: [UsageSnapshotRecord]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("统一历史快照").font(.headline).padding(15)
+            Divider().overlay(PrototypePalette.line)
+            historyRow(
+                time: "时间",
+                week: "ChatGPT Week",
+                reset: "Reset",
+                available: "DeepSeek 可用",
+                today: "今日消费",
+                tokens: "今日用量",
+                isHeader: true
+            )
+            Divider().overlay(PrototypePalette.line)
+
+            if records.isEmpty {
+                Text("尚无本地快照记录。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(15)
+            } else {
+                ForEach(records) { record in
+                    let deepSeek = record.providerUsage?.first { $0.providerID == .deepseek }
+                    let providerValues = UsageHistoryPresentation.providerValues(deepSeek)
+                    historyRow(
+                        time: UIStamp.string(record.capturedAt),
+                        week: String(format: "%.0f%%", record.weeklyRemainingPercent),
+                        reset: record.resetCredits.map { "\($0) 次" } ?? "--",
+                        available: providerValues.available,
+                        today: providerValues.todaySpend,
+                        tokens: providerValues.todayTokens,
+                        isHeader: false
+                    )
+                    Divider().overlay(PrototypePalette.line)
+                }
+            }
+        }
+        .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(PrototypePalette.line))
+    }
+
+    private func historyRow(
+        time: String,
+        week: String,
+        reset: String,
+        available: String,
+        today: String,
+        tokens: String,
+        isHeader: Bool
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(time).frame(minWidth: 138, maxWidth: .infinity, alignment: .leading)
+            Text(week).frame(minWidth: 82, maxWidth: .infinity)
+            Text(reset).frame(minWidth: 54, maxWidth: .infinity)
+            Text(available).frame(minWidth: 90, maxWidth: .infinity)
+            Text(today).frame(minWidth: 74, maxWidth: .infinity)
+            Text(tokens).frame(minWidth: 70, maxWidth: .infinity)
+        }
+        .font(isHeader ? .caption.weight(.semibold) : .caption)
+        .foregroundStyle(isHeader ? .secondary : .primary)
+        .padding(.horizontal, 15)
+        .frame(height: 38)
+    }
+}
+
+private extension View {
+    func usagePanel(height: CGFloat) -> some View {
+        self
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
+            .background(PrototypePalette.panel, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(PrototypePalette.line))
+    }
 }
 
 private struct ResetExpiryList: View {

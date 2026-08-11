@@ -21,7 +21,7 @@ final class ProfileCardRecognizer: ProfileCardRecognizing {
             guard let text = observation.topCandidates(1).first?.string else { return nil }
             return RecognizedLine(text: text, x: observation.boundingBox.midX, y: observation.boundingBox.midY)
         } ?? []
-        return try Self.parse(recognizedLines: lines)
+        return Self.parse(recognizedLines: lines)
     }
 
     static func parse(lines: [String]) throws -> ProfileSnapshotDraft {

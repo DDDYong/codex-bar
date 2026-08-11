@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title>Codex Dashboard · Compact Window Prototype</title>
+<style>
+:root{--bg:#0b1017;--shell:#101722;--side:#111a26;--panel:#151f2c;--panel2:#1a2533;--line:#2a3748;--text:#f5f7fb;--muted:#91a0b5;--blue:#2e7df3;--blue2:#1d62d1;--purple:#9d5de2;--green:#45c978;--orange:#ff953f;--red:#ff6868;--shadow:0 24px 80px rgba(0,0,0,.4);--sw:244px}
+[data-theme=light]{--bg:#e9eef5;--shell:#f5f7fa;--side:#f4f6f9;--panel:#fff;--panel2:#f7f9fc;--line:#d7dee8;--text:#182235;--muted:#6c788d;--shadow:0 20px 60px rgba(45,57,78,.18)}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text);background:radial-gradient(circle at 12% 0,rgba(46,125,243,.16),transparent 28%),var(--bg)}button,input,select{font:inherit;color:inherit}button{cursor:pointer}.app{width:min(1500px,calc(100vw - 26px));height:min(950px,calc(100vh - 26px));margin:13px auto;display:grid;grid-template-columns:var(--sw) 1fr;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--shell);box-shadow:var(--shadow)}.side{background:linear-gradient(180deg,rgba(255,255,255,.02),transparent 40%),var(--side);border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column}.lights{display:flex;gap:8px;margin:1px 0 25px 4px}.lights i{width:13px;height:13px;border-radius:50%}.lights i:nth-child(1){background:#ff605c}.lights i:nth-child(2){background:#ffbd44}.lights i:nth-child(3){background:#00ca4e}.brand{display:flex;align-items:center;gap:11px;padding:0 9px 22px}.mark{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(145deg,#2a3a51,#172131);border:1px solid var(--line);font-size:21px}.brand b{font-size:18px}.version{margin-left:auto;font-size:10px;color:var(--muted);border:1px solid var(--line);padding:3px 6px;border-radius:6px;background:var(--panel)}.label{font-size:11px;color:var(--muted);padding:8px 13px}.nav{display:grid;gap:5px}.nav button{border:0;background:transparent;text-align:left;border-radius:11px;padding:12px 13px;display:flex;align-items:center;gap:11px;font-size:14px;font-weight:600;transition:.18s}.nav button:hover{background:var(--panel2)}.nav button.active{background:linear-gradient(180deg,var(--blue),var(--blue2));box-shadow:0 8px 22px rgba(46,125,243,.25)}.nav .ico{width:20px;text-align:center}.count{margin-left:auto;min-width:22px;height:20px;display:grid;place-items:center;border-radius:7px;background:var(--panel);border:1px solid var(--line);font-size:10px;color:var(--muted)}.nav button.active .count{background:rgba(255,255,255,.14);color:white;border-color:rgba(255,255,255,.16)}.sideBottom{margin-top:auto;display:grid;gap:10px}.mini{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font-size:11px}.miniRow{display:flex;align-items:center;gap:9px}.mini .sub{color:var(--muted);margin-bottom:3px}.dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 5px rgba(69,201,120,.13)}.theme{display:grid;grid-template-columns:1fr 1fr;gap:6px;border:1px solid var(--line);background:var(--panel);padding:5px;border-radius:11px}.theme button{border:0;background:transparent;border-radius:8px;padding:8px}.theme button.active{background:rgba(46,125,243,.15);color:#76a9ff;box-shadow:inset 0 0 0 1px rgba(46,125,243,.42)}.main{min-width:0;min-height:0;display:flex;flex-direction:column}.top{height:104px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:20px 24px;gap:15px;background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}.avatar{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#8293aa,#2a394d);border:1px solid var(--line);font-size:25px}.hello h1{font-size:21px;margin:0 0 5px}.hello p{margin:0;color:var(--muted);font-size:12px}.badge{margin-left:7px;font-size:10px;color:#6fa7ff;border:1px solid rgba(46,125,243,.48);background:rgba(46,125,243,.12);padding:2px 6px;border-radius:6px}.actions{margin-left:auto;display:flex;gap:9px}.btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 13px;display:inline-flex;align-items:center;gap:7px;transition:.18s}.btn:hover{background:var(--panel2);transform:translateY(-1px)}.btn.primary{border-color:transparent;background:linear-gradient(180deg,var(--blue),var(--blue2));box-shadow:0 8px 18px rgba(46,125,243,.22)}.btn.icon{width:41px;height:41px;padding:0;justify-content:center}.spin{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.pages{flex:1;min-height:0;overflow:auto;padding:18px 24px 26px}.page{display:none;animation:fade .18s ease}.page.active{display:block}@keyframes fade{from{opacity:.45;transform:translateY(3px)}to{opacity:1;transform:none}}.pageHead{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px}.pageHead h2{margin:0 0 5px;font-size:20px}.pageHead p{margin:0;color:var(--muted);font-size:12px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.grid2{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.8fr);gap:14px}.grid2e{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.mt{margin-top:14px}.panel{background:linear-gradient(180deg,rgba(255,255,255,.012),transparent),var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden}.ph{display:flex;align-items:center;gap:7px;padding:14px 16px 11px}.pt{font-size:15px;font-weight:750}.info{width:15px;height:15px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--muted);color:var(--muted);font-size:9px}.link{margin-left:auto;border:0;background:none;color:#5596ff;font-size:11px;padding:0}.metric{min-height:176px;padding:16px}.metricTitle{font-size:14px;font-weight:750}.metricBody{display:flex;align-items:center;gap:17px;margin-top:13px}.ring{--p:75;--c:var(--blue);width:91px;height:91px;flex:0 0 auto;border-radius:50%;display:grid;place-items:center;position:relative;background:conic-gradient(var(--c) calc(var(--p)*1%),rgba(255,255,255,.07) 0)}.ring:after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--panel)}.ringText{position:relative;z-index:1;text-align:center}.ringText strong{display:block;font-size:22px;line-height:1}.ringText span{font-size:10px;color:var(--muted)}.mcopy .k{font-size:10px;color:var(--muted)}.mcopy .v{font-size:21px;font-weight:780;margin:3px 0}.mcopy .s{font-size:10px;color:var(--muted)}.mcopy .a{font-size:11px;color:#62a1ff;margin-top:10px;line-height:1.45}.dateIcon{width:84px;height:84px;border-radius:50%;display:grid;place-items:center;background:rgba(255,149,63,.06);border:8px solid rgba(255,149,63,.09);font-size:31px;color:var(--orange)}.toolbar{display:flex;align-items:center;gap:15px;padding:0 16px 6px}.legend{display:flex;gap:13px;color:var(--muted);font-size:10px}.legend span{display:flex;align-items:center;gap:6px}.legend i{width:18px;height:3px;border-radius:3px}.select{margin-left:auto;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 9px;outline:none}.chart{width:100%;height:218px;display:block;padding:0 10px 10px}.chart .g{stroke:var(--line);stroke-width:1;stroke-dasharray:3 5}.chart text{fill:var(--muted);font-size:11px}.chart .b{fill:none;stroke:var(--blue);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.chart .p{fill:none;stroke:var(--purple);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.tokenGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;padding:0 14px 13px}.token{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px;min-width:0}.token .ti{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;margin-bottom:8px}.token .tk{font-size:10px;color:var(--muted)}.token strong{display:block;font-size:17px;margin:5px 0 2px;white-space:nowrap}.token small{font-size:10px;color:var(--muted)}.progWrap{padding:2px 16px 17px}.progLabels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:7px}.prog{height:9px;background:rgba(255,255,255,.07);border-radius:99px;overflow:hidden}.prog i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--blue),var(--blue2))}.progMeta{display:flex;justify-content:space-between;margin-top:10px;font-size:10px;color:var(--muted)}.progMeta b{font-size:14px;color:var(--text)}.table{overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px 13px;border-top:1px solid var(--line);font-size:11px;white-space:nowrap}th{color:var(--muted);font-weight:600;background:rgba(255,255,255,.012)}tbody tr{transition:.15s;cursor:pointer}tbody tr:hover{background:var(--panel2)}.pcell{display:flex;align-items:center;gap:8px}.pico{width:23px;height:23px;border-radius:7px;display:grid;place-items:center;background:rgba(46,125,243,.15);color:#6da6ff}.tag{display:inline-flex;padding:3px 7px;border-radius:6px;font-size:9px;color:#73aaff;border:1px solid rgba(46,125,243,.4);background:rgba(46,125,243,.14)}.tag.green{color:#6ddd93;border-color:rgba(69,201,120,.4);background:rgba(69,201,120,.12)}.tag.orange{color:#ffb06d;border-color:rgba(255,149,63,.4);background:rgba(255,149,63,.12)}.pluginSummary{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 14px 10px}.pluginBox{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:13px}.pluginBox .k{font-size:10px;color:var(--muted)}.pluginBox .big{font-size:23px;font-weight:780;margin:8px 0 11px}.logos{display:flex;gap:7px}.logo{width:31px;height:31px;border-radius:50%;display:grid;place-items:center;background:var(--panel);border:1px solid var(--line);font-size:11px}.srcList{display:grid;gap:7px;font-size:10px}.srcLine{display:flex;justify-content:space-between}.latest{margin:0 14px 14px;border:1px solid var(--line);background:var(--panel2);border-radius:9px;padding:10px 12px;display:flex;gap:8px;align-items:center;font-size:11px}.latest .push{margin-left:auto;color:var(--muted)}.footer{height:39px;border-top:1px solid var(--line);padding:0 24px;display:flex;align-items:center;color:var(--muted);font-size:10px}.footer .tz{margin-left:auto}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.sum{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px}.sum .k{font-size:11px;color:var(--muted)}.sum .v{font-size:24px;font-weight:780;margin-top:7px}.sum .s{font-size:10px;color:var(--muted);margin-top:5px}.filter{display:flex;gap:9px;align-items:center;margin-bottom:12px;flex-wrap:wrap}.search{flex:1;min-width:250px;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 12px;outline:none}.search:focus{border-color:rgba(46,125,243,.7);box-shadow:0 0 0 3px rgba(46,125,243,.12)}.chip{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:99px;padding:8px 12px}.chip.active{color:#75aaff;border-color:rgba(46,125,243,.55);background:rgba(46,125,243,.12)}.cards3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:15px;transition:.18s}.card:hover{transform:translateY(-2px);background:var(--panel2)}.ct{display:flex;align-items:center;gap:8px;font-weight:750}.path{font-size:10px;color:var(--muted);margin:9px 0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta{display:flex;justify-content:space-between;color:var(--muted);font-size:10px}.card p{font-size:10px;color:var(--muted);line-height:1.6;min-height:32px}.cardActions{display:flex;gap:8px;margin-top:12px}.small{flex:1;border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:8px;font-size:10px}.source{display:grid;grid-template-columns:1fr auto;gap:12px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:15px}.source+.source{margin-top:10px}.source h3{margin:0 0 5px;font-size:13px}.source p{margin:0;color:var(--muted);font-size:10px}.sourceR{text-align:right;font-size:11px}.sourceR span{display:block;color:var(--muted);font-size:9px;margin-top:4px}.settings{display:grid;grid-template-columns:1fr 1fr;gap:14px}.settingRow{display:flex;align-items:center;gap:13px;padding:14px 16px;border-top:1px solid var(--line)}.settingRow:first-child{border-top:0}.settingRow h4{margin:0 0 4px;font-size:12px}.settingRow p{margin:0;color:var(--muted);font-size:10px}.toggle{margin-left:auto;width:42px;height:24px;border:0;border-radius:99px;background:#3a4351;padding:3px}.toggle:after{content:"";display:block;width:18px;height:18px;border-radius:50%;background:#fff;transition:.18s}.toggle.on{background:var(--blue)}.toggle.on:after{transform:translateX(18px)}.toast{position:fixed;right:25px;bottom:25px;min-width:250px;background:rgba(18,25,36,.96);color:#fff;border:1px solid #35435a;border-radius:12px;padding:13px 15px;box-shadow:0 18px 45px rgba(0,0,0,.35);opacity:0;transform:translateY(12px);pointer-events:none;transition:.25s;z-index:20;font-size:12px}.toast.show{opacity:1;transform:none}.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:30;backdrop-filter:blur(8px)}.backdrop.show{display:flex}.modal{width:min(600px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}.mh{display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)}.mh h3{margin:0;font-size:15px}.close{margin-left:auto;border:0;background:none;color:var(--muted);font-size:20px}.mb{padding:18px}.details{display:grid;grid-template-columns:130px 1fr;gap:10px;font-size:11px}.details div:nth-child(odd){color:var(--muted)}
+@media(max-width:1180px){:root{--sw:216px}.grid4{grid-template-columns:repeat(2,1fr)}.grid2,.grid2e{grid-template-columns:1fr}.cards3{grid-template-columns:repeat(2,1fr)}}@media(max-width:820px){body{overflow:auto}.app{width:100%;height:auto;min-height:100vh;margin:0;border-radius:0;border:0;grid-template-columns:1fr}.side{display:none}.top{height:auto;flex-wrap:wrap}.actions{width:100%;margin-left:0}.pages{overflow:visible}.grid4,.grid2,.grid2e,.cards3,.settings,.summary{grid-template-columns:1fr}.footer{display:none}}
+
+/* v2: single-screen layout, no Month quota, Reset expiration list */
+.app{height:calc(100vh - 12px);margin:6px auto}
+.top{height:90px;padding:15px 22px}
+.pages{overflow:hidden;padding:12px 18px 14px}
+.page.active{height:100%;overflow:hidden}
+#page-sessions.active,#page-plugins.active{overflow-y:auto;padding-right:5px}
+.footer{height:32px;padding:0 18px}
+.side{padding-top:14px;padding-bottom:10px}
+.sideBottom{gap:8px}
+.mini{padding:10px 11px}
+.grid4,.grid2,.grid2e{gap:10px}
+.mt{margin-top:10px}
+.dashboardMetrics{grid-template-columns:repeat(4,minmax(0,1fr))}
+.expirationMetric{grid-column:span 2}
+.metric{min-height:145px;padding:13px}
+.metricTitle{display:flex;align-items:center;gap:10px}
+.metricBody{margin-top:8px}
+.ring{width:76px;height:76px}
+.ring:after{inset:8px}
+.ringText strong{font-size:19px}
+.mcopy .v{font-size:18px}
+.mcopy .a{margin-top:7px}
+.mutedNote{font-size:10px;font-weight:500;color:var(--muted)}
+.expiryList{display:grid;gap:7px;margin-top:10px}
+.expiryItem{display:grid;grid-template-columns:25px minmax(0,1fr) auto;align-items:center;gap:9px;padding:7px 9px;background:var(--panel2);border:1px solid var(--line);border-radius:9px}
+.expiryIndex{width:23px;height:23px;border-radius:7px;display:grid;place-items:center;background:rgba(69,201,120,.13);color:var(--green);font-size:10px;font-weight:750}
+.expiryItem b{display:block;font-size:11px}
+.expiryItem small{display:block;margin-top:2px;color:var(--muted);font-size:9px}
+.expiryRemain{font-size:11px;color:var(--text);font-weight:700}
+.expiryRemain.warning{color:var(--orange)}
+#page-dashboard>.grid2{grid-template-columns:minmax(0,1.45fr) minmax(355px,.9fr)}
+#page-dashboard .ph{padding:10px 14px 7px}
+#page-dashboard .toolbar{padding:0 14px 3px}
+#page-dashboard .chart{height:164px;padding-bottom:4px}
+#page-dashboard .tokenGrid{padding:0 11px 9px;gap:7px}
+#page-dashboard .token{padding:8px}
+#page-dashboard .token .ti{width:26px;height:26px;margin-bottom:5px}
+#page-dashboard .token strong{font-size:15px;margin:3px 0 1px}
+#page-dashboard .progWrap{padding:0 13px 11px}
+#page-dashboard th,#page-dashboard td{padding:7px 11px;font-size:10px}
+#page-dashboard .pico{width:20px;height:20px}
+#page-dashboard .pluginSummary{padding:0 11px 7px;gap:8px}
+#page-dashboard .pluginBox{padding:10px}
+#page-dashboard .pluginBox .big{font-size:20px;margin:5px 0 8px}
+#page-dashboard .logo{width:27px;height:27px}
+#page-dashboard .latest{margin:0 11px 10px;padding:8px 10px}
+#page-dashboard .table,#page-usage .table{overflow:hidden}
+.pageHead{margin-bottom:11px}
+.pageHead h2{font-size:18px}
+.summary{gap:10px}
+.sum{padding:13px}
+.sum .v{font-size:21px;margin-top:4px}
+.compactDate{font-size:18px!important}
+.usageMain{grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr)}
+.usageProgress{padding:3px 15px 14px;display:grid;gap:13px}
+.usageHint{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--line);background:var(--panel2);border-radius:9px;padding:10px 11px;font-size:11px}
+.usageHint span{color:#67a3ff}
+.usageHistory th,.usageHistory td,.usageMain th,.usageMain td{padding:8px 12px}
+#page-activity .summary{margin-bottom:0}
+#page-activity .chart{height:195px}
+.settings{gap:10px}
+.settingRow{padding:10px 13px}
+.settingRow h4{margin-bottom:2px}
+#page-settings .ph{padding:10px 14px 7px}
+.noScrollTable{overflow:hidden}
+@media(max-width:1180px){
+  .dashboardMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .expirationMetric{grid-column:span 2}
+}
+
+
+/* v3 corrections */
+.pages{
+  overflow:hidden;
+  position:relative;
+}
+.page.active{
+  transform-origin:top left;
+}
+#page-sessions.active,
+#page-plugins.active{
+  height:100%;
+  overflow-y:auto;
+  overflow-x:hidden;
+  transform:none !important;
+  width:100% !important;
+}
+#page-sources.active{
+  overflow:hidden;
+}
+.usageSummary{
+  grid-template-columns:minmax(0,.8fr) minmax(0,.8fr) minmax(390px,1.4fr);
+}
+.expirySummary{
+  padding:12px 14px;
+}
+.expirySummaryList{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+  margin-top:8px;
+}
+.expirySummaryList>div{
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:3px 8px;
+  align-items:center;
+  padding:8px 9px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--panel2);
+}
+.expirySummaryList span{
+  grid-row:1 / span 2;
+  color:var(--muted);
+  font-size:9px;
+}
+.expirySummaryList b{
+  font-size:11px;
+  white-space:nowrap;
+}
+.expirySummaryList em{
+  color:var(--muted);
+  font-size:9px;
+  font-style:normal;
+}
+.expirySummaryList>div:first-child em{
+  color:var(--orange);
+}
+#sessionGrid .meta{
+  display:grid;
+  grid-template-columns:1fr auto auto;
+  gap:12px;
+  align-items:center;
+}
+.sessionSize{
+  color:#7fa8df;
+  white-space:nowrap;
+}
+#page-sessions .session{
+  min-height:112px;
+}
+.fitIndicator{
+  display:none;
+}
+@media(max-height:760px){
+  .top{height:82px}
+  .pages{padding-top:10px;padding-bottom:10px}
+}
+@media(max-width:1120px){
+  .usageSummary{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .expirySummary{
+    grid-column:1 / -1;
+  }
+}
+
+/* v4 corrections */
+.quotaResetSummary{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.quotaResetValue{
+  margin-top:6px;
+  color:var(--text);
+  font-size:22px;
+  line-height:1.2;
+  font-weight:760;
+  letter-spacing:-.3px;
+}
+.sourceCount{
+  min-width:34px !important;
+  padding:0 6px;
+  color:var(--green) !important;
+  border-color:rgba(69,201,120,.35) !important;
+  background:rgba(69,201,120,.09) !important;
+}
+.nav button.active .sourceCount{
+  color:#fff !important;
+  border-color:rgba(255,255,255,.25) !important;
+  background:rgba(255,255,255,.15) !important;
+}
+
+/* v5: compact centered macOS-style popup window */
+html, body{
+  width:100%;
+  height:100%;
+}
+
+body{
+  margin:0;
+  padding:32px;
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(47,125,244,.10), transparent 30%),
+    radial-gradient(circle at 85% 8%, rgba(161,93,231,.07), transparent 26%),
+    #080d14;
+}
+
+.app{
+  width:min(1200px, calc(100vw - 64px)) !important;
+  height:min(760px, calc(100vh - 64px)) !important;
+  min-width:1024px;
+  min-height:680px;
+  margin:0 !important;
+  border-radius:18px;
+  box-shadow:0 28px 80px rgba(0,0,0,.50);
+}
+
+.side{
+  width:220px;
+  padding:14px 12px 10px;
+}
+
+.logo{
+  padding:0 8px 16px;
+}
+
+.logoName{
+  font-size:16px;
+  line-height:1.12;
+}
+
+.version{
+  font-size:9px;
+  padding:2px 6px;
+}
+
+.navTitle{
+  padding:7px 11px;
+  font-size:10px;
+}
+
+.nav button{
+  padding:10px 11px;
+  font-size:13px;
+  border-radius:10px;
+}
+
+.nav button svg,
+.nav button .ico{
+  width:16px;
+  min-width:16px;
+}
+
+.nav .count{
+  height:18px;
+  min-width:20px;
+  font-size:9px;
+}
+
+.sideBottom{
+  gap:7px;
+}
+
+.sideBottom .mini{
+  padding:9px 10px;
+}
+
+.theme{
+  padding:4px;
+}
+
+.theme button{
+  padding:6px;
+}
+
+.top{
+  height:80px;
+  padding:13px 18px;
+}
+
+.avatar{
+  width:44px;
+  height:44px;
+  font-size:21px;
+}
+
+.hello h1{
+  margin-bottom:3px;
+  font-size:18px;
+}
+
+.hello p{
+  font-size:11px;
+}
+
+.topActions .btn{
+  padding:8px 11px;
+  font-size:12px;
+}
+
+.pages{
+  padding:12px 16px 13px;
+}
+
+.footer{
+  height:28px;
+  padding:0 16px;
+  font-size:9px;
+}
+
+.grid4,
+.grid2,
+.grid2e{
+  gap:9px;
+}
+
+.mt{
+  margin-top:9px;
+}
+
+.metric{
+  min-height:132px;
+  padding:11px;
+}
+
+.metricTitle{
+  font-size:12px;
+}
+
+.metricBody{
+  gap:12px;
+  margin-top:7px;
+}
+
+.ring{
+  width:68px;
+  height:68px;
+}
+
+.ringText strong{
+  font-size:17px;
+}
+
+.ringText span{
+  font-size:9px;
+}
+
+.mcopy .k,
+.mcopy .s{
+  font-size:9px;
+}
+
+.mcopy .v{
+  font-size:16px;
+}
+
+.mcopy .a{
+  margin-top:5px;
+  font-size:9px;
+}
+
+.expirationMetric{
+  padding:11px;
+}
+
+.expiryList{
+  gap:5px;
+  margin-top:7px;
+}
+
+.expiryItem{
+  padding:6px 7px;
+}
+
+.expiryIndex{
+  width:20px;
+  height:20px;
+  font-size:9px;
+}
+
+.expiryItem b{
+  font-size:10px;
+}
+
+.expiryItem small,
+.expiryRemain{
+  font-size:9px;
+}
+
+#page-dashboard .chart{
+  height:150px;
+}
+
+#page-dashboard .ph{
+  padding:9px 12px 6px;
+}
+
+#page-dashboard .toolbar{
+  padding:0 12px 2px;
+}
+
+#page-dashboard .tokenGrid{
+  gap:6px;
+  padding:0 10px 8px;
+}
+
+#page-dashboard .token{
+  padding:7px;
+}
+
+#page-dashboard .token strong{
+  font-size:14px;
+}
+
+#page-dashboard .progWrap{
+  padding:0 11px 9px;
+}
+
+#page-dashboard th,
+#page-dashboard td{
+  padding:6px 9px;
+  font-size:9px;
+}
+
+#page-dashboard .pluginSummary{
+  gap:7px;
+  padding:0 10px 7px;
+}
+
+#page-dashboard .pluginBox{
+  padding:9px;
+}
+
+#page-dashboard .pluginBox .big{
+  margin:4px 0 7px;
+  font-size:18px;
+}
+
+#page-dashboard .latest{
+  margin:0 10px 9px;
+  padding:7px 9px;
+}
+
+.pageHead{
+  margin-bottom:9px;
+}
+
+.pageHead h2{
+  font-size:17px;
+}
+
+.pageHead p{
+  font-size:10px;
+}
+
+.summary{
+  gap:8px;
+}
+
+.sum{
+  padding:11px;
+}
+
+.sum .v{
+  margin-top:4px;
+  font-size:19px;
+}
+
+.usageMain th,
+.usageMain td,
+.usageHistory th,
+.usageHistory td{
+  padding:7px 10px;
+  font-size:10px;
+}
+
+.settings{
+  gap:9px;
+}
+
+.settingRow{
+  padding:9px 11px;
+}
+
+.settingRow h4{
+  font-size:11px;
+}
+
+.settingRow p{
+  font-size:9px;
+}
+
+@media(max-width:1120px), (max-height:720px){
+  body{
+    padding:18px;
+  }
+
+  .app{
+    width:calc(100vw - 36px) !important;
+    height:calc(100vh - 36px) !important;
+    min-width:0;
+    min-height:0;
+  }
+}
+
+/* v6: variable-length Reset expiry lists */
+.refreshSummary{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.refreshSummaryValue{
+  margin-top:6px;
+  color:var(--text);
+  font-size:20px;
+  line-height:1.2;
+  font-weight:760;
+  letter-spacing:-.2px;
+}
+.listCountHint{
+  margin-left:auto;
+  color:var(--muted);
+  font-size:9px;
+  font-weight:500;
+  white-space:nowrap;
+}
+.expiryScrollArea{
+  max-height:100px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+  padding-right:3px;
+}
+.resetTableScroll{
+  max-height:150px;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
+.resetTableScroll table{
+  width:100%;
+}
+.resetTableScroll thead{
+  position:sticky;
+  top:0;
+  z-index:2;
+}
+.resetTableScroll thead th{
+  background:var(--panel);
+  box-shadow:0 1px 0 var(--line);
+}
+.expiryScrollArea:focus,
+.resetTableScroll:focus{
+  outline:1px solid rgba(47,125,244,.45);
+  outline-offset:2px;
+}
+.expiryScrollArea::-webkit-scrollbar,
+.resetTableScroll::-webkit-scrollbar{
+  width:7px;
+}
+.expiryScrollArea::-webkit-scrollbar-track,
+.resetTableScroll::-webkit-scrollbar-track{
+  background:transparent;
+}
+.expiryScrollArea::-webkit-scrollbar-thumb,
+.resetTableScroll::-webkit-scrollbar-thumb{
+  background:rgba(128,145,168,.34);
+  border-radius:999px;
+}
+.expiryScrollArea::-webkit-scrollbar-thumb:hover,
+.resetTableScroll::-webkit-scrollbar-thumb:hover{
+  background:rgba(128,145,168,.55);
+}
+</style>
+</head>
+<body data-theme="dark">
+<div class="app">
+<aside class="side">
+<div class="lights"><i></i><i></i><i></i></div>
+<div class="brand"><div class="mark">🐱</div><b>Codex Dashboard</b><span class="version">v1.0.0</span></div>
+<nav class="nav">
+<button class="active" data-page="dashboard"><span class="ico">▦</span>仪表板</button>
+<button data-page="usage"><span class="ico">◴</span>额度与 Reset</button>
+<button data-page="activity"><span class="ico">⌁</span>活动统计</button>
+<button data-page="sessions"><span class="ico">▭</span>Codex 会话<span class="count">12</span></button>
+<button data-page="plugins"><span class="ico">⌘</span>插件与 Skills<span class="count">32</span></button>
+<button data-page="sources"><span class="ico">◉</span>数据源<span class="count sourceCount">6/6</span></button><button data-page="settings"><span class="ico">⚙</span>设置</button>
+</nav>
+<div class="sideBottom">
+<div class="mini"><div class="miniRow"><span>◌</span><div><div class="sub">最后刷新</div><div id="lastRefresh">2026-07-15 10:28:41</div></div><button class="btn icon" id="miniRefresh" style="margin-left:auto;width:33px;height:33px">↻</button></div></div>
+<div class="theme"><button data-theme="light">☀︎</button><button class="active" data-theme="dark">☾</button></div>
+</div>
+</aside>
+<main class="main">
+<header class="top"><div class="avatar">🐱</div><div class="hello"><h1>你好，week 👋</h1><p>个人版 · Plus Plan <span class="badge">活跃</span></p></div><div class="actions"><button class="btn" id="refresh"><span id="refreshIcon">↻</span>刷新数据</button><button class="btn icon" data-jump="settings">⚙</button></div></header>
+<div class="pages">
+<section class="page active" id="page-dashboard">
+<div class="grid4 dashboardMetrics">
+<article class="panel metric">
+<div class="metricTitle">Week 额度 ⓘ</div>
+<div class="metricBody">
+<div class="ring" style="--p:98"><div class="ringText"><strong>98%</strong><span>剩余</span></div></div>
+<div class="mcopy">
+<div class="k">剩余额度</div>
+<div class="v">9,802</div>
+<div class="s">/ 10,000</div>
+<div class="a">重置时间<br/>2 天 13:31:18</div>
+</div>
+</div>
+</article>
+<article class="panel metric">
+<div class="metricTitle">Reset 次数 ⓘ</div>
+<div class="metricBody">
+<div class="ring" style="--p:58;--c:var(--green)"><div class="ringText"><strong>3</strong><span>次</span></div></div>
+<div class="mcopy">
+<div class="k">当前可用</div>
+<div class="v">3 次</div>
+<div class="a" style="color:var(--muted)">最近到期<br/>2026/07/27 07:39</div>
+</div>
+</div>
+</article>
+<article class="panel metric expirationMetric">
+<div class="metricTitle">Reset 过期时间 <span class="mutedNote">每次 Reset 对应一个独立过期时间</span><span class="listCountHint">3 条</span></div>
+<div aria-label="Reset 过期时间列表，可上下滚动" class="expiryList expiryScrollArea" tabindex="0">
+<div class="expiryItem">
+<span class="expiryIndex">1</span>
+<div><b>2026/07/27 07:39</b><small>第 1 次 Reset</small></div>
+<span class="expiryRemain warning">12 天</span>
+</div>
+<div class="expiryItem">
+<span class="expiryIndex">2</span>
+<div><b>2026/08/01 03:51</b><small>第 2 次 Reset</small></div>
+<span class="expiryRemain">17 天</span>
+</div>
+<div class="expiryItem">
+<span class="expiryIndex">3</span>
+<div><b>2026/08/13 01:30</b><small>第 3 次 Reset</small></div>
+<span class="expiryRemain">28 天</span>
+</div>
+</div>
+</article>
+</div>
+<div class="grid2 mt">
+<article class="panel"><div class="ph"><div class="pt">近 7 天额度消耗趋势</div><span class="info">i</span><select class="select range"><option>近 7 天</option><option>近 14 天</option><option>近 30 天</option></select></div><div class="toolbar"><div class="legend"><span><i style="background:var(--blue)"></i>Week 剩余额度</span></div></div><svg class="chart" viewbox="0 0 700 240"><line class="g" x1="48" x2="680" y1="25" y2="25"></line><line class="g" x1="48" x2="680" y1="80" y2="80"></line><line class="g" x1="48" x2="680" y1="135" y2="135"></line><line class="g" x1="48" x2="680" y1="190" y2="190"></line><text x="5" y="29">100%</text><text x="15" y="84">75%</text><text x="15" y="139">50%</text><text x="15" y="194">25%</text><path class="b" d="M50 26 L150 31 L250 36 L350 39 L450 43 L550 48 L675 51"></path><text x="37" y="225">07/09</text><text x="137" y="225">07/10</text><text x="237" y="225">07/11</text><text x="337" y="225">07/12</text><text x="437" y="225">07/13</text><text x="537" y="225">07/14</text><text x="648" y="225">07/15</text></svg></article>
+<article class="panel"><div class="ph"><div class="pt">Token 活动（今日）</div><span class="info">i</span><select class="select range"><option>今日</option><option>近 7 天</option><option>近 30 天</option></select></div><div class="tokenGrid"><div class="token"><div class="ti" style="background:rgba(46,125,243,.16);color:#72aaff">➤</div><div class="tk">总消耗</div><strong>842,671</strong><small>tokens</small></div><div class="token"><div class="ti" style="background:rgba(69,201,120,.15);color:#6ddd93">↓</div><div class="tk">输入</div><strong>312,540</strong><small>tokens</small></div><div class="token"><div class="ti" style="background:rgba(157,93,226,.16);color:#c27cff">↑</div><div class="tk">输出</div><strong>530,131</strong><small>tokens</small></div><div class="token"><div class="ti" style="background:rgba(255,149,63,.15);color:#ffb06d">⌁</div><div class="tk">请求次数</div><strong>68</strong><small>次</small></div></div><div class="progWrap"><div class="progLabels"><span>本周概览（07/09 – 07/15）</span><b style="color:var(--text)">76%</b></div><div class="prog"><i style="width:76%"></i></div><div class="progMeta"><div>总消耗<br/><b>6,421,093 tokens</b></div><div style="text-align:right">日均消耗<br/><b>917,299 tokens</b></div></div></div></article>
+</div>
+<div class="grid2e mt">
+<article class="panel"><div class="ph"><div class="pt">最近会话</div><span class="info">i</span><button class="link" data-jump="sessions">查看全部</button></div><div class="table"><table><thead><tr><th>会话名称</th><th>项目路径</th><th>最后活动</th><th>模型</th><th>模式</th></tr></thead><tbody><tr class="detailRow"><td><div class="pcell"><span class="pico">▣</span>api-autotest 开发</div></td><td>~/Projects/api-autotest</td><td>2 分钟前</td><td>gpt-5.6</td><td><span class="tag">cloud</span></td></tr><tr class="detailRow"><td><div class="pcell"><span class="pico">▣</span>prompt-tool 优化</div></td><td>~/Projects/prompt-tool</td><td>1 小时前</td><td>gpt-5.6</td><td><span class="tag">cloud</span></td></tr><tr class="detailRow"><td><div class="pcell"><span class="pico">⌂</span>旅行攻略生成器</div></td><td>~/Projects/travel-guide</td><td>3 小时前</td><td>gpt-5.5</td><td><span class="tag">cloud</span></td></tr><tr class="detailRow"><td><div class="pcell"><span class="pico">◫</span>棋盘小游戏</div></td><td>~/Projects/board-game</td><td>昨天</td><td>gpt-5.5-mini</td><td><span class="tag green">local</span></td></tr></tbody></table></div></article>
+<article class="panel"><div class="ph"><div class="pt">插件与 Skills 概览</div><span class="info">i</span><button class="link" data-jump="plugins">查看全部</button></div><div class="pluginSummary"><div class="pluginBox"><div class="k">已安装插件</div><div class="big">8 个</div><div class="logos"><span class="logo">GH</span><span class="logo">Fg</span><span class="logo">GD</span><span class="logo">N</span><span class="logo">+4</span></div></div><div class="pluginBox"><div class="k">可用 Skills</div><div class="big">32 个</div><div class="srcList"><div class="srcLine"><span>● 官方</span><b>15</b></div><div class="srcLine"><span>● 社区</span><b>10</b></div><div class="srcLine"><span>● 本地</span><b>7</b></div></div></div></div><div class="latest"><span>最近更新插件</span><b>Figma for Codex</b><span class="push">1 天前　›</span></div></article>
+</div>
+</section>
+<section class="page" id="page-usage">
+<div class="pageHead">
+<div><h2>额度与 Reset</h2><p>查看 Week 额度、Reset 次数、过期时间和本地历史快照。</p></div>
+<div><button class="btn" id="export">导出记录</button> <button class="btn primary" id="snapshot">保存快照</button></div>
+</div>
+<div class="summary usageSummary">
+<div class="sum"><div class="k">Week 剩余额度</div><div class="v">98%</div><div class="s" style="color:var(--green)">较昨日 +1.2%</div></div>
+<div class="sum"><div class="k">可用 Reset</div><div class="v">3 次</div><div class="s">每次均有独立过期时间</div></div>
+<div class="sum refreshSummary">
+<div class="k">最后刷新</div>
+<div class="refreshSummaryValue">2026/07/15</div>
+<div class="s">10:28:41 · UsageSource</div>
+</div>
+</div>
+<div class="grid2e mt usageMain">
+<article class="panel">
+<div class="ph"><div class="pt">Reset 到期列表<span class="listCountHint">3 条</span></div><span class="info">i</span></div>
+<div aria-label="Reset 到期列表，可上下滚动" class="table noScrollTable resetTableScroll" tabindex="0">
+<table>
+<thead><tr><th>序号</th><th>到期时间</th><th>剩余时间</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td>第 1 次</td><td>2026/07/27 07:39</td><td>12 天</td><td><span class="tag orange">即将到期</span></td></tr>
+<tr><td>第 2 次</td><td>2026/08/01 03:51</td><td>17 天</td><td><span class="tag">可用</span></td></tr>
+<tr><td>第 3 次</td><td>2026/08/13 01:30</td><td>28 天</td><td><span class="tag">可用</span></td></tr>
+</tbody>
+</table>
+</div>
+</article>
+<article class="panel">
+<div class="ph"><div class="pt">额度与周期</div></div>
+<div class="usageProgress">
+<div>
+<div class="progLabels"><span>Week 额度</span><b>98%</b></div>
+<div class="prog"><i style="width:98%"></i></div>
+</div>
+<div>
+<div class="progLabels"><span>当前周期已使用</span><b>2%</b></div>
+<div class="prog"><i style="width:2%;background:var(--orange)"></i></div>
+</div>
+<div class="usageHint">
+<b>下一次额度重置</b>
+<span>2 天 13:31:18</span>
+</div>
+</div>
+</article>
+</div>
+<article class="panel mt usageHistory">
+<div class="ph"><div class="pt">历史快照</div><span class="info">i</span></div>
+<div class="table noScrollTable">
+<table>
+<thead><tr><th>时间</th><th>Week</th><th>Reset</th><th>最近到期</th><th>来源</th><th>变化</th></tr></thead>
+<tbody id="snapBody">
+<tr><td>2026/07/15 10:28</td><td>98%</td><td>3</td><td>07/27 07:39</td><td>UsageSource</td><td><span class="tag green">最新</span></td></tr>
+<tr><td>2026/07/14 10:25</td><td>96.8%</td><td>3</td><td>07/27 07:39</td><td>UsageSource</td><td>-1.2%</td></tr>
+</tbody>
+</table>
+</div>
+</article>
+</section>
+<section class="page" id="page-activity"><div class="pageHead"><div><h2>活动统计</h2><p>区分精准 Token 数据与基于额度快照生成的估算趋势。</p></div><select class="select"><option>近 7 天</option><option>近 30 天</option></select></div><div class="summary"><div class="sum"><div class="k">总 Token</div><div class="v">6.42M</div><div class="s">本周累计</div></div><div class="sum"><div class="k">平均每次请求</div><div class="v">13.5K</div><div class="s">476 次请求</div></div><div class="sum"><div class="k">最活跃时段</div><div class="v">21:00</div><div class="s">约占全天 18%</div></div></div><div class="grid2e mt"><article class="panel"><div class="ph"><div class="pt">Token 使用分布</div></div><svg class="chart" viewbox="0 0 600 240"><line class="g" x1="40" x2="575" y1="30" y2="30"></line><line class="g" x1="40" x2="575" y1="85" y2="85"></line><line class="g" x1="40" x2="575" y1="140" y2="140"></line><line class="g" x1="40" x2="575" y1="195" y2="195"></line><path class="b" d="M45 180 L125 155 L205 170 L285 125 L365 95 L445 110 L570 55"></path><text x="38" y="224">周一</text><text x="118" y="224">周二</text><text x="198" y="224">周三</text><text x="278" y="224">周四</text><text x="358" y="224">周五</text><text x="438" y="224">周六</text><text x="548" y="224">周日</text></svg></article><article class="panel"><div class="ph"><div class="pt">输入 / 输出占比</div></div><div style="display:flex;align-items:center;gap:28px;padding:18px 24px 27px"><div class="ring" style="--p:63;--c:var(--purple);width:130px;height:130px"><div class="ringText"><strong>63%</strong><span>输出</span></div></div><div style="flex:1;display:grid;gap:17px"><div><div class="progLabels"><span>输入 Token</span><b>37%</b></div><div class="prog"><i style="width:37%;background:var(--green)"></i></div></div><div><div class="progLabels"><span>输出 Token</span><b>63%</b></div><div class="prog"><i style="width:63%;background:var(--purple)"></i></div></div><div style="font-size:10px;color:var(--muted)">当前为交互原型模拟数据，真实版本应显示来源与可信度。</div></div></div></article></div></section>
+<section class="page" id="page-sessions"><div class="pageHead"><div><h2>Codex 会话</h2><p>查看本机可识别的会话索引，不读取完整正文。</p></div><button class="btn" id="reindex">重新建立索引</button></div><div class="filter"><input class="search" id="sessionSearch" placeholder="搜索会话名称或项目路径…"/><button class="chip active" data-sf="all">全部</button><button class="chip" data-sf="cloud">Cloud</button><button class="chip" data-sf="local">Local</button></div><div class="cards3" id="sessionGrid"><div class="card session" data-name="api-autotest 开发 ~/Projects/api-autotest" data-size="12.4 MB" data-type="cloud"><div class="ct"><span class="pico">▣</span>api-autotest 开发<span class="tag" style="margin-left:auto">cloud</span></div><div class="path">~/Projects/api-autotest</div><div class="meta"><span>2 分钟前</span><span class="sessionSize">大小 12.4 MB</span><span>gpt-5.6</span></div></div><div class="card session" data-name="prompt-tool 优化 ~/Projects/prompt-tool" data-size="8.7 MB" data-type="cloud"><div class="ct"><span class="pico">▣</span>prompt-tool 优化<span class="tag" style="margin-left:auto">cloud</span></div><div class="path">~/Projects/prompt-tool</div><div class="meta"><span>1 小时前</span><span class="sessionSize">大小 8.7 MB</span><span>gpt-5.6</span></div></div><div class="card session" data-name="旅行攻略生成器 ~/Projects/travel-guide" data-size="5.2 MB" data-type="cloud"><div class="ct"><span class="pico">⌂</span>旅行攻略生成器<span class="tag" style="margin-left:auto">cloud</span></div><div class="path">~/Projects/travel-guide</div><div class="meta"><span>3 小时前</span><span class="sessionSize">大小 5.2 MB</span><span>gpt-5.5</span></div></div><div class="card session" data-name="棋盘小游戏 ~/Projects/board-game" data-size="3.8 MB" data-type="local"><div class="ct"><span class="pico">◫</span>棋盘小游戏<span class="tag green" style="margin-left:auto">local</span></div><div class="path">~/Projects/board-game</div><div class="meta"><span>昨天</span><span class="sessionSize">大小 3.8 MB</span><span>gpt-5.5-mini</span></div></div><div class="card session" data-name="算法备案测试用例 ~/Projects/ai-compliance" data-size="6.6 MB" data-type="cloud"><div class="ct"><span class="pico">▣</span>算法备案测试用例<span class="tag" style="margin-left:auto">cloud</span></div><div class="path">~/Projects/ai-compliance</div><div class="meta"><span>2 天前</span><span class="sessionSize">大小 6.6 MB</span><span>gpt-5.5</span></div></div><div class="card session" data-name="菜单栏余额工具 ~/Projects/codex-meter" data-size="2.1 MB" data-type="local"><div class="ct"><span class="pico">▣</span>菜单栏余额工具<span class="tag green" style="margin-left:auto">local</span></div><div class="path">~/Projects/codex-meter</div><div class="meta"><span>刚刚</span><span class="sessionSize">大小 2.1 MB</span><span>gpt-5.6</span></div></div></div></section>
+<section class="page" id="page-plugins"><div class="pageHead"><div><h2>插件与 Skills</h2><p>查看已安装插件、可用 Skills、来源和本地路径。</p></div><button class="btn" id="scan">重新扫描</button></div><div class="filter"><input class="search" id="pluginSearch" placeholder="搜索插件或 Skill…"/><button class="chip active" data-pf="all">全部</button><button class="chip" data-pf="official">官方</button><button class="chip" data-pf="community">社区</button><button class="chip" data-pf="local">本地</button></div><div class="cards3" id="pluginGrid"><div class="card plugin" data-name="GitHub 仓库 issue pull request" data-type="official"><div class="ct"><span class="logo">GH</span>GitHub<span class="tag" style="margin-left:auto">官方</span></div><p>访问仓库、Issues、Pull Requests，并与代码工作流联动。</p><div class="meta"><span>5 个 Skills</span><span>已连接</span></div><div class="cardActions"><button class="small detailPlugin">查看详情</button><button class="small copy" data-path="~/Library/Application Support/Codex/plugins/github">复制路径</button></div></div><div class="card plugin" data-name="Figma design prototype UI" data-type="official"><div class="ct"><span class="logo">Fg</span>Figma<span class="tag" style="margin-left:auto">官方</span></div><p>连接 Figma 画布，读取设计文件并生成可编辑结构。</p><div class="meta"><span>3 个 Skills</span><span>已连接</span></div><div class="cardActions"><button class="small detailPlugin">查看详情</button><button class="small copy" data-path="~/Library/Application Support/Codex/plugins/figma">复制路径</button></div></div><div class="card plugin" data-name="Google Drive docs sheets slides" data-type="official"><div class="ct"><span class="logo">GD</span>Google Drive<span class="tag" style="margin-left:auto">官方</span></div><p>搜索和读取 Drive、Docs、Sheets 与 Slides 文件。</p><div class="meta"><span>4 个 Skills</span><span>已连接</span></div><div class="cardActions"><button class="small detailPlugin">查看详情</button><button class="small copy" data-path="~/Library/Application Support/Codex/plugins/google-drive">复制路径</button></div></div><div class="card plugin" data-name="Superpowers TDD debugging planning" data-type="community"><div class="ct"><span class="logo">SP</span>Superpowers<span class="tag orange" style="margin-left:auto">社区</span></div><p>提供头脑风暴、计划、TDD、调试与代码审查工作流。</p><div class="meta"><span>12 个 Skills</span><span>本地可用</span></div><div class="cardActions"><button class="small detailPlugin">查看详情</button><button class="small copy" data-path="~/.codex/plugins/superpowers">复制路径</button></div></div><div class="card plugin" data-name="Codex Meter local skill usage" data-type="local"><div class="ct"><span class="logo">CM</span>Codex Meter Skills<span class="tag green" style="margin-left:auto">本地</span></div><p>提供额度解析、快照统计和会话索引能力。</p><div class="meta"><span>4 个 Skills</span><span>本地可用</span></div><div class="cardActions"><button class="small detailPlugin">查看详情</button><button class="small copy" data-path="~/.codex/skills/codex-meter">复制路径</button></div></div><div class="card plugin" data-name="Build Web Apps frontend React" data-type="community"><div class="ct"><span class="logo">WA</span>Build Web Apps<span class="tag orange" style="margin-left:auto">社区</span></div><p>用于构建前端应用、Dashboard 与交互式原型。</p><div class="meta"><span>6 个 Skills</span><span>本地可用</span></div><div class="cardActions"><button class="small detailPlugin">查看详情</button><button class="small copy" data-path="~/.codex/plugins/build-web-apps">复制路径</button></div></div></div></section>
+<section class="page" id="page-sources"><div class="pageHead"><div><h2>数据源</h2><p>检查来源、更新时间、权限状态和降级情况。</p></div><button class="btn primary" id="check">重新检测</button></div><div class="source"><div><h3>UsageSource</h3><p>读取 Week 额度、Reset 次数及每次 Reset 的独立过期时间。</p></div><div class="sourceR"><b style="color:var(--green)">可用</b><span>刚刚更新</span></div></div><div class="source"><div><h3>SnapshotStore</h3><p>保存本地额度快照，用于趋势和历史统计。</p></div><div class="sourceR"><b style="color:var(--green)">可用</b><span>48 条记录</span></div></div><div class="source"><div><h3>SessionSource</h3><p>只读扫描 Codex 会话索引，不读取完整正文。</p></div><div class="sourceR"><b style="color:var(--green)">可用</b><span>12 个会话</span></div></div><div class="source"><div><h3>PluginSource</h3><p>扫描已安装插件及可读取元数据。</p></div><div class="sourceR"><b style="color:var(--green)">可用</b><span>8 个插件</span></div></div><div class="source"><div><h3>SkillSource</h3><p>扫描 Skill 定义、描述、来源和路径。</p></div><div class="sourceR"><b style="color:var(--green)">可用</b><span>32 个 Skills</span></div></div><div class="source"><div><h3>TokenSource</h3><p>精准 Token 来源尚未验证，目前使用原型模拟值。</p></div><div class="sourceR"><b style="color:var(--orange)">部分可用</b><span>趋势可用</span></div></div></section><section class="page" id="page-settings"><div class="pageHead"><div><h2>设置</h2><p>配置刷新频率、菜单栏显示、隐私和本地数据。</p></div></div><div class="settings"><article class="panel"><div class="ph"><div class="pt">通用</div></div><div class="settingRow"><div><h4>开机启动</h4><p>登录 macOS 后自动启动工具。</p></div><button class="toggle on"></button></div><div class="settingRow"><div><h4>启动时打开主窗口</h4><p>默认仅启动菜单栏。</p></div><button class="toggle"></button></div><div class="settingRow"><div><h4>自动刷新</h4><p>按设定间隔刷新数据。</p></div><button class="toggle on"></button></div><div class="settingRow"><div><h4>刷新频率</h4><p>建议不少于 5 分钟。</p></div><select class="select"><option>5 分钟</option><option>15 分钟</option><option>30 分钟</option></select></div></article><article class="panel"><div class="ph"><div class="pt">菜单栏显示</div></div><div class="settingRow"><div><h4>显示方式</h4><p>控制菜单栏信息密度。</p></div><select class="select"><option>详细</option><option>简略</option><option>仅图标</option></select></div><div class="settingRow"><div><h4>显示 Reset 次数</h4><p>在菜单栏加入剩余次数。</p></div><button class="toggle on"></button></div><div class="settingRow"><div><h4>低额度提醒</h4><p>Week 低于 20% 时提醒。</p></div><button class="toggle on"></button></div></article><article class="panel"><div class="ph"><div class="pt">隐私</div></div><div class="settingRow"><div><h4>扫描会话索引</h4><p>仅读取名称、路径和时间。</p></div><button class="toggle on"></button></div><div class="settingRow"><div><h4>读取完整会话正文</h4><p>默认关闭，原型不会读取正文。</p></div><button class="toggle"></button></div><div class="settingRow"><div><h4>扫描插件和 Skills</h4><p>只读扫描本地描述文件。</p></div><button class="toggle on"></button></div></article><article class="panel"><div class="ph"><div class="pt">本地数据</div></div><div class="settingRow"><div><h4>保存历史快照</h4><p>用于生成使用趋势。</p></div><button class="toggle on"></button></div><div class="settingRow"><div><h4>历史保留天数</h4><p>超期数据自动清理。</p></div><select class="select"><option>90 天</option><option>180 天</option><option>永久</option></select></div><div class="settingRow"><div><h4>清空历史数据</h4><p>不影响 Codex 原始文件。</p></div><button class="btn" id="clear" style="margin-left:auto;color:var(--red)">清空</button></div></article></div></section>
+</div>
+<footer class="footer"><span>🛡 数据保存在本地，仅用于显示统计与分析</span><span class="tz">当前时区：Asia/Shanghai（UTC+8）</span></footer>
+</main></div>
+<div class="toast" id="toast">操作成功</div><div class="backdrop" id="backdrop"><div class="modal"><div class="mh"><h3 id="modalTitle">详情</h3><button class="close" id="close">×</button></div><div class="mb" id="modalBody"></div></div></div>
+<script>
+const $$=s=>[...document.querySelectorAll(s)],$=s=>document.querySelector(s),toast=$('#toast');let timer;function tip(t){clearTimeout(timer);toast.textContent=t;toast.classList.add('show');timer=setTimeout(()=>toast.classList.remove('show'),2200)}function page(n){
+      $$('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+n));
+      $$('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===n));
+      $('.pages').scrollTop=0;
+      requestAnimationFrame(()=>fitActivePage());
+    }
+    function fitActivePage(){
+      const active=$('.page.active');
+      const host=$('.pages');
+      if(!active||!host)return;
+      active.style.transform='none';
+      active.style.width='100%';
+      active.style.height='auto';
+      if(active.id==='page-sessions'||active.id==='page-plugins'){
+        active.style.height='100%';
+        return;
+      }
+      const availableH=host.clientHeight;
+      const availableW=host.clientWidth;
+      const contentH=active.scrollHeight;
+      const contentW=active.scrollWidth;
+      const scale=Math.min(1,availableH/contentH,availableW/contentW);
+      active.style.transform=`scale(${scale})`;
+      active.style.width=`calc(100% / ${scale})`;
+      active.style.height=`calc(${contentH}px * ${scale})`;
+    }$$('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));$$('[data-jump]').forEach(b=>b.onclick=()=>page(b.dataset.jump));$$('.theme button').forEach(b=>b.onclick=()=>{document.body.dataset.theme=b.dataset.theme;$$('.theme button').forEach(x=>x.classList.toggle('active',x===b));tip(b.dataset.theme==='dark'?'已切换为深色主题':'已切换为浅色主题')});function refresh(btn){$('#refreshIcon').classList.add('spin');setTimeout(()=>{$('#refreshIcon').classList.remove('spin');$('#lastRefresh').textContent=new Date().toLocaleString('zh-CN',{hour12:false}).replaceAll('/','-');tip('数据刷新完成')},700)}$('#refresh').onclick=e=>refresh(e.currentTarget);$('#miniRefresh').onclick=e=>refresh(e.currentTarget);$$('.range').forEach(s=>s.onchange=()=>tip('统计范围：'+s.value));$$('.toggle').forEach(t=>t.onclick=()=>{t.classList.toggle('on');tip(t.classList.contains('on')?'设置已开启':'设置已关闭')});function modal(title,html){$('#modalTitle').textContent=title;$('#modalBody').innerHTML=html;$('#backdrop').classList.add('show')}$('#close').onclick=()=>$('#backdrop').classList.remove('show');$('#backdrop').onclick=e=>{if(e.target===$('#backdrop'))$('#backdrop').classList.remove('show')};$$('.detailRow').forEach(r=>r.onclick=()=>modal(r.children[0].innerText,'<div class="details"><div>项目路径</div><div>'+r.children[1].innerText+'</div><div>最后活动</div><div>'+r.children[2].innerText+'</div><div>模型</div><div>'+r.children[3].innerText+'</div><div>运行模式</div><div>'+r.children[4].innerText+'</div><div>数据读取</div><div>仅展示索引元数据，不读取完整会话正文。</div></div>'));$$('.session').forEach(c=>c.onclick=()=>modal(c.querySelector('.ct').innerText.split('\n')[0],'<div class="details"><div>项目路径</div><div>'+c.querySelector('.path').innerText+'</div><div>最后活动</div><div>'+c.querySelector('.meta').children[0].innerText+'</div><div>会话大小</div><div>'+c.dataset.size+'</div><div>模型</div><div>'+c.querySelector('.meta').children[2].innerText+'</div><div>运行模式</div><div>'+c.dataset.type+'</div><div>会话正文</div><div>未读取</div></div>'));let sf='all';function filterSessions(){let q=$('#sessionSearch').value.toLowerCase();$$('#sessionGrid .session').forEach(c=>c.style.display=((sf==='all'||c.dataset.type===sf)&&c.dataset.name.toLowerCase().includes(q))?'':'none')}$('#sessionSearch').oninput=filterSessions;$$('[data-sf]').forEach(c=>c.onclick=()=>{$$('[data-sf]').forEach(x=>x.classList.remove('active'));c.classList.add('active');sf=c.dataset.sf;filterSessions()});let pf='all';function filterPlugins(){let q=$('#pluginSearch').value.toLowerCase();$$('#pluginGrid .plugin').forEach(c=>c.style.display=((pf==='all'||c.dataset.type===pf)&&c.dataset.name.toLowerCase().includes(q))?'':'none')}$('#pluginSearch').oninput=filterPlugins;$$('[data-pf]').forEach(c=>c.onclick=()=>{$$('[data-pf]').forEach(x=>x.classList.remove('active'));c.classList.add('active');pf=c.dataset.pf;filterPlugins()});$$('.copy').forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await navigator.clipboard.writeText(b.dataset.path);tip('路径已复制')}catch{tip('已模拟复制路径')}});$$('.detailPlugin').forEach(b=>b.onclick=()=>{let c=b.closest('.plugin');modal(c.querySelector('.ct').innerText.split('\n')[0],'<p style="color:var(--muted);font-size:11px;line-height:1.7">'+c.querySelector('p').innerText+'</p><div class="details"><div>来源</div><div>'+c.dataset.type+'</div><div>Skills</div><div>'+c.querySelector('.meta').children[0].innerText+'</div><div>状态</div><div>'+c.querySelector('.meta').children[1].innerText+'</div><div>管理能力</div><div>当前原型仅支持只读查看</div></div>')});$('#snapshot').onclick=()=>{let tr=document.createElement('tr');tr.innerHTML='<td>'+new Date().toLocaleString('zh-CN',{hour12:false})+'</td><td>98%</td><td>3</td><td>07/27 07:39</td><td>UsageSource</td><td><span class="tag green">最新</span></td>';$('#snapBody').prepend(tr);tip('已保存一条本地快照')};$('#export').onclick=()=>tip('已模拟导出 usage-history.csv');$('#reindex').onclick=()=>tip('会话索引已重新建立');$('#scan').onclick=()=>tip('插件与 Skills 扫描完成');if($('#check'))$('#check').onclick=()=>tip('6 个数据源检测完成');$('#clear').onclick=()=>modal('确认清空历史数据','<p style="font-size:11px;color:var(--muted);line-height:1.7">此操作只会删除本原型中的历史快照，不会修改 Codex 原始文件。</p><div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px"><button class="btn" onclick="document.querySelector(\'#backdrop\').classList.remove(\'show\')">取消</button><button class="btn" style="color:var(--red)" onclick="document.querySelector(\'#snapBody\').innerHTML=\'\';document.querySelector(\'#backdrop\').classList.remove(\'show\');tip(\'历史数据已清空\')">确认清空</button></div>');document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#backdrop').classList.remove('show');if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='r'){e.preventDefault();refresh()}});window.addEventListener('resize',()=>requestAnimationFrame(fitActivePage));window.addEventListener('load',()=>requestAnimationFrame(fitActivePage));
+</script>
+</body></html>

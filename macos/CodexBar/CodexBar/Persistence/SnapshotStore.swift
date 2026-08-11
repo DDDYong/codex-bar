@@ -18,12 +18,26 @@ final class SnapshotStore {
         return records.sorted { $0.capturedAt < $1.capturedAt }
     }
 
-    func append(_ record: UsageSnapshotRecord, retentionDays: Int = 90) throws {
+    func append(
+        _ record: UsageSnapshotRecord,
+        retentionDays: Int = 90,
+        deduplicate: Bool = true
+    ) throws {
         var records = load()
         if let last = records.last,
+           last.capturedAt == record.capturedAt {
+            guard last != record else { return }
+            records[records.count - 1] = record
+            try save(records)
+            return
+        }
+        if deduplicate,
+           let last = records.last,
            abs(last.weeklyRemainingPercent - record.weeklyRemainingPercent) < 0.01,
            last.shortRemainingPercent == record.shortRemainingPercent,
-           last.resetCredits == record.resetCredits {
+           last.resetCredits == record.resetCredits,
+           last.resetCreditExpirations == record.resetCreditExpirations,
+           last.providerUsage == record.providerUsage {
             return
         }
         let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? .distantPast

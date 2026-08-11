@@ -25,13 +25,13 @@ enum DashboardRoute: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .dashboard: "原生仪表盘将在真实数据源接入后显示额度与摘要。"
-        case .usage: "Usage 与 Reset 数据将在 N2 和 N4 阶段接入。"
-        case .activity: "活动趋势与统计将在快照能力完成后显示。"
-        case .sessions: "会话索引将在 N7 阶段以只读方式接入。"
-        case .pluginsSkills: "插件和 Skills 元数据将在 N8 阶段以只读方式接入。"
-        case .dataSources: "数据源状态将在相应读取能力接入后显示。"
-        case .settings: "设置持久化和可操作选项将在 N6 阶段接入。"
+        case .dashboard: "汇总 ChatGPT 与已启用 Provider 的当前状态。"
+        case .usage: "在同一页面独立展示 ChatGPT 与第三方 Provider 指标、Reset 和本地快照。"
+        case .activity: "展示 Codex app-server 汇总的 Token 活动与趋势。"
+        case .sessions: "索引本机会话，并提供受保护的归档与删除操作。"
+        case .pluginsSkills: "展示本机插件、Skills 与 MCP 配置元数据。"
+        case .dataSources: "展示各数据源的可用状态、范围与最近错误。"
+        case .settings: "管理外观、本地数据、Provider 凭据与启动选项。"
         }
     }
 

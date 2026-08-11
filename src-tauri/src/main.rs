@@ -18,8 +18,11 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 struct AppState {
     client: reqwest::Client,
     snapshot: Mutex<Option<ProviderSnapshot>>,
+    deepseek_snapshot: Mutex<Option<ProviderSnapshot>>,
+    deepseek_error: Mutex<Option<String>>,
     display_mode: Mutex<DisplayMode>,
     refreshing: Mutex<bool>,
+    deepseek_refreshing: Mutex<bool>,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum DisplayMode {
@@ -31,58 +34,17 @@ static POLLING: AtomicBool = AtomicBool::new(false);
 static QUOTA_POLLING: AtomicBool = AtomicBool::new(false);
 const QUOTA_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
-#[cfg(test)]
-mod tests {
-    use super::{begin_refresh, status_light, tray_title, DisplayMode, QUOTA_POLL_INTERVAL};
-
-    #[test]
-    fn quota_refreshes_once_per_minute_without_overlapping_requests() {
-        assert_eq!(QUOTA_POLL_INTERVAL, std::time::Duration::from_secs(60));
-
-        let mut refreshing = false;
-        assert!(begin_refresh(&mut refreshing));
-        assert!(!begin_refresh(&mut refreshing));
-    }
-
-    #[test]
-    fn display_modes_never_put_session_light_in_the_title() {
-        assert_eq!(
-            tray_title(DisplayMode::Detailed, "week 68%", "week 68% · 周五 · 2次"),
-            "week 68% · 周五 · 2次"
-        );
-        assert_eq!(
-            tray_title(DisplayMode::Compact, "week 68%", "week 68% · 周五 · 2次"),
-            "week 68%"
-        );
-        assert_eq!(
-            tray_title(DisplayMode::IconOnly, "week 68%", "week 68% · 周五 · 2次"),
-            ""
-        );
-    }
-
-    #[test]
-    fn legacy_status_without_sessions_is_not_shown_as_completed() {
-        assert_eq!(
-            status_light(Some(&serde_json::json!({"state": "completed"}))),
-            "⚪"
-        );
-        assert_eq!(
-            status_light(Some(
-                &serde_json::json!({"state": "completed", "sessions": {}})
-            )),
-            "🟢"
-        );
-    }
-}
-
-fn reset_label(value: Option<&str>) -> String {
+fn reset_label_at(value: Option<&str>, now: DateTime<Local>) -> String {
     let Some(reset) = value
         .and_then(|v| DateTime::parse_from_rfc3339(v).ok())
         .map(|v| v.with_timezone(&Local))
     else {
         return "--".into();
     };
-    if reset.signed_duration_since(Local::now()) < Duration::hours(24) {
+    let remaining = reset.signed_duration_since(now);
+    if remaining <= Duration::zero() {
+        "--".into()
+    } else if remaining < Duration::hours(24) {
         reset.format("%H:%M").to_string()
     } else {
         ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -91,6 +53,9 @@ fn reset_label(value: Option<&str>) -> String {
     }
 }
 fn summary(snapshot: Option<&ProviderSnapshot>) -> String {
+    summary_at(snapshot, Local::now())
+}
+fn summary_at(snapshot: Option<&ProviderSnapshot>, now: DateTime<Local>) -> String {
     let Some(s) = snapshot.filter(|s| s.status == "ok") else {
         return "week -- · -- · --".into();
     };
@@ -99,16 +64,48 @@ fn summary(snapshot: Option<&ProviderSnapshot>) -> String {
         .as_ref()
         .map(|w| format!("{:.0}%", w.remaining_percent))
         .unwrap_or_else(|| "--".into());
-    let reset = reset_label(
+    let reset = reset_label_at(
         s.weekly_window
             .as_ref()
             .and_then(|w| w.resets_at.as_deref()),
+        now,
     );
-    let credits = s
-        .reset_credits
+    let credits = active_reset_credit_count(s, now)
         .map(|n| format!("{n}次"))
         .unwrap_or_else(|| "--".into());
     format!("week {percent} · {reset} · {credits}")
+}
+fn active_reset_credit_count(snapshot: &ProviderSnapshot, now: DateTime<Local>) -> Option<u64> {
+    if snapshot.reset_credit_expires_at.is_empty() {
+        return snapshot.reset_credits;
+    }
+    snapshot
+        .reset_credit_expires_at
+        .iter()
+        .filter_map(|value| DateTime::parse_from_rfc3339(value).ok())
+        .any(|expiration| expiration.with_timezone(&Local) > now)
+        .then_some(snapshot.reset_credits)
+        .flatten()
+}
+fn balance_summary(snapshot: Option<&ProviderSnapshot>) -> Option<String> {
+    let snapshot = snapshot.filter(|snapshot| snapshot.status == "ok")?;
+    let balance = snapshot
+        .balance
+        .filter(|value| value.is_finite() && *value >= 0.0)?;
+    let currency = snapshot.currency.as_deref()?;
+    let amount = match currency {
+        "CNY" => format!("¥{balance:.2}"),
+        "USD" => format!("${balance:.2}"),
+        _ => format!("{balance:.2} {currency}"),
+    };
+    Some(format!("{} 可用余额：{amount}", snapshot.display_name))
+}
+fn official_error_summary(snapshot: Option<&ProviderSnapshot>) -> Option<String> {
+    let snapshot = snapshot.filter(|snapshot| snapshot.status != "ok")?;
+    snapshot
+        .message
+        .as_ref()
+        .map(|message| format!("CODEX：{message}"))
 }
 fn compact_summary(snapshot: Option<&ProviderSnapshot>) -> String {
     summary(snapshot)
@@ -173,7 +170,7 @@ fn badge_icon(status: &str) -> tauri::image::Image<'static> {
                 let px = cx + x;
                 let py = cy + y;
                 if px >= 0 && py >= 0 && (px as usize) < width && (py as usize) < height {
-                    let index = ((py as usize * width + px as usize) * 4) as usize;
+                    let index = (py as usize * width + px as usize) * 4;
                     rgba[index..index + 4].copy_from_slice(&color);
                 }
             }
@@ -182,16 +179,22 @@ fn badge_icon(status: &str) -> tauri::image::Image<'static> {
     tauri::image::Image::new_owned(rgba, width as u32, height as u32)
 }
 fn expiration_lines(snapshot: Option<&ProviderSnapshot>) -> Vec<String> {
+    expiration_lines_at(snapshot, Local::now())
+}
+fn expiration_lines_at(snapshot: Option<&ProviderSnapshot>, now: DateTime<Local>) -> Vec<String> {
     snapshot
         .map(|s| {
             s.reset_credit_expires_at
                 .iter()
+                .filter_map(|value| {
+                    let date = DateTime::parse_from_rfc3339(value)
+                        .ok()?
+                        .with_timezone(&Local);
+                    (date > now).then_some(date)
+                })
                 .enumerate()
-                .map(|(i, v)| {
-                    let date = DateTime::parse_from_rfc3339(v)
-                        .ok()
-                        .map(|d| d.with_timezone(&Local).format("%Y/%m/%d %H:%M").to_string())
-                        .unwrap_or_else(|| "--".into());
+                .map(|(i, date)| {
+                    let date = date.format("%Y/%m/%d %H:%M");
                     format!("第 {} 次 · {date} 到期", i + 1)
                 })
                 .collect()
@@ -208,21 +211,65 @@ fn begin_refresh(refreshing: &mut bool) -> bool {
     }
 }
 
+fn finish_official_refresh(
+    snapshot_slot: &Mutex<Option<ProviderSnapshot>>,
+    refreshing: &Mutex<bool>,
+    snapshot: ProviderSnapshot,
+) {
+    *snapshot_slot.lock().unwrap() = Some(snapshot);
+    *refreshing.lock().unwrap() = false;
+}
+
+fn finish_deepseek_refresh(
+    snapshot_slot: &Mutex<Option<ProviderSnapshot>>,
+    error_slot: &Mutex<Option<String>>,
+    refreshing: &Mutex<bool>,
+    result: Result<ProviderSnapshot, &'static str>,
+) {
+    match result {
+        Ok(snapshot) => {
+            *snapshot_slot.lock().unwrap() = Some(snapshot);
+            *error_slot.lock().unwrap() = None;
+        }
+        Err(message) => {
+            *error_slot.lock().unwrap() = Some(message.into());
+        }
+    }
+    *refreshing.lock().unwrap() = false;
+}
+
 fn refresh(app: &AppHandle) {
     start_status_polling(app.clone());
     let state = app.state::<AppState>();
-    if !begin_refresh(&mut state.refreshing.lock().unwrap()) {
+    let refresh_official = begin_refresh(&mut state.refreshing.lock().unwrap());
+    let refresh_deepseek = begin_refresh(&mut state.deepseek_refreshing.lock().unwrap());
+    if !refresh_official && !refresh_deepseek {
         return;
     }
     update(app);
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let state = app.state::<AppState>();
-        let next = codex::fetch_snapshot(&state.client).await;
-        *state.snapshot.lock().unwrap() = Some(next);
-        *state.refreshing.lock().unwrap() = false;
-        update(&app);
-    });
+    if refresh_official {
+        let official_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = official_app.state::<AppState>();
+            let official = codex::fetch_snapshot(&state.client).await;
+            finish_official_refresh(&state.snapshot, &state.refreshing, official);
+            update(&official_app);
+        });
+    }
+    if refresh_deepseek {
+        let deepseek_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = deepseek_app.state::<AppState>();
+            let result = codex::fetch_deepseek_balance(&state.client).await;
+            finish_deepseek_refresh(
+                &state.deepseek_snapshot,
+                &state.deepseek_error,
+                &state.deepseek_refreshing,
+                result,
+            );
+            update(&deepseek_app);
+        });
+    }
 }
 fn start_status_polling(app: AppHandle) {
     if POLLING.swap(true, Ordering::Relaxed) {
@@ -259,15 +306,39 @@ fn update_title(app: &AppHandle) {
 fn update(app: &AppHandle) {
     let state = app.state::<AppState>();
     let snapshot = state.snapshot.lock().unwrap().clone();
+    let deepseek_snapshot = state.deepseek_snapshot.lock().unwrap().clone();
+    let deepseek_error = state.deepseek_error.lock().unwrap().clone();
     let display_mode = *state.display_mode.lock().unwrap();
     let tray = app.tray_by_id("main").unwrap();
     update_title(app);
     let info =
         MenuItem::with_id(app, "info", summary(snapshot.as_ref()), false, None::<&str>).unwrap();
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![Box::new(info)];
+    if let Some(line) = official_error_summary(snapshot.as_ref()) {
+        items.push(Box::new(
+            MenuItem::with_id(app, "official-error", line, false, None::<&str>).unwrap(),
+        ));
+    }
     for (i, line) in expiration_lines(snapshot.as_ref()).iter().enumerate() {
         items.push(Box::new(
             MenuItem::with_id(app, format!("expiry-{i}"), line, false, None::<&str>).unwrap(),
+        ));
+    }
+    if let Some(line) = balance_summary(deepseek_snapshot.as_ref()) {
+        items.push(Box::new(
+            MenuItem::with_id(app, "deepseek-balance", line, false, None::<&str>).unwrap(),
+        ));
+    }
+    if let Some(message) = deepseek_error {
+        items.push(Box::new(
+            MenuItem::with_id(
+                app,
+                "deepseek-error",
+                format!("DeepSeek：{message}"),
+                false,
+                None::<&str>,
+            )
+            .unwrap(),
         ));
     }
     items.push(Box::new(PredefinedMenuItem::separator(app).unwrap()));
@@ -338,13 +409,18 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(12))
+                .https_only(true)
+                .redirect(codex::authenticated_redirect_policy())
                 .user_agent("CodexBar/0.1")
                 .build()?;
             app.manage(AppState {
                 client,
                 snapshot: Mutex::new(None),
+                deepseek_snapshot: Mutex::new(None),
+                deepseek_error: Mutex::new(None),
                 display_mode: Mutex::new(DisplayMode::IconOnly),
                 refreshing: Mutex::new(false),
+                deepseek_refreshing: Mutex::new(false),
             });
             let mut tray = TrayIconBuilder::with_id("main")
                 .tooltip("Codex Bar")
@@ -386,4 +462,172 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("failed to run Codex Bar");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        balance_summary, begin_refresh, expiration_lines_at, finish_deepseek_refresh,
+        finish_official_refresh, reset_label_at, status_light, summary_at, tray_title, DisplayMode,
+        QUOTA_POLL_INTERVAL,
+    };
+    use crate::models::ProviderSnapshot;
+    use chrono::{DateTime, Local};
+    use std::sync::Mutex;
+
+    #[test]
+    fn quota_refreshes_once_per_minute_without_overlapping_requests() {
+        assert_eq!(QUOTA_POLL_INTERVAL, std::time::Duration::from_secs(60));
+
+        let mut refreshing = false;
+        assert!(begin_refresh(&mut refreshing));
+        assert!(!begin_refresh(&mut refreshing));
+    }
+
+    #[test]
+    fn display_modes_never_put_session_light_in_the_title() {
+        assert_eq!(
+            tray_title(DisplayMode::Detailed, "week 68%", "week 68% · 周五 · 2次"),
+            "week 68% · 周五 · 2次"
+        );
+        assert_eq!(
+            tray_title(DisplayMode::Compact, "week 68%", "week 68% · 周五 · 2次"),
+            "week 68%"
+        );
+        assert_eq!(
+            tray_title(DisplayMode::IconOnly, "week 68%", "week 68% · 周五 · 2次"),
+            ""
+        );
+    }
+
+    #[test]
+    fn legacy_status_without_sessions_is_not_shown_as_completed() {
+        assert_eq!(
+            status_light(Some(&serde_json::json!({"state": "completed"}))),
+            "⚪"
+        );
+        assert_eq!(
+            status_light(Some(
+                &serde_json::json!({"state": "completed", "sessions": {}})
+            )),
+            "🟢"
+        );
+    }
+
+    #[test]
+    fn deepseek_balance_is_presented_without_replacing_the_official_summary() {
+        let snapshot = ProviderSnapshot {
+            display_name: "DeepSeek".into(),
+            weekly_window: None,
+            reset_credits: None,
+            reset_credit_expires_at: vec![],
+            status: "ok".into(),
+            message: None,
+            balance: Some(11.61),
+            currency: Some("CNY".into()),
+        };
+
+        assert_eq!(
+            balance_summary(Some(&snapshot)),
+            Some("DeepSeek 可用余额：¥11.61".into())
+        );
+        assert_eq!(
+            tray_title(DisplayMode::Compact, "week 68%", "ignored"),
+            "week 68%"
+        );
+    }
+
+    #[test]
+    fn past_reset_timestamp_is_not_presented_as_a_future_clock_time() {
+        let now = DateTime::parse_from_rfc3339("2026-08-11T08:00:00Z")
+            .unwrap()
+            .with_timezone(&Local);
+        assert_eq!(reset_label_at(Some("2000-01-01T00:00:00Z"), now), "--");
+    }
+
+    #[test]
+    fn menu_hides_expired_reset_credits_and_keeps_only_future_expirations() {
+        let now = DateTime::parse_from_rfc3339("2026-08-11T08:00:00Z")
+            .unwrap()
+            .with_timezone(&Local);
+        let expired = ProviderSnapshot {
+            display_name: "CODEX".into(),
+            weekly_window: None,
+            reset_credits: Some(2),
+            reset_credit_expires_at: vec![
+                "2026-08-11T07:59:59Z".into(),
+                "2026-08-11T08:00:00Z".into(),
+            ],
+            status: "ok".into(),
+            message: None,
+            balance: None,
+            currency: None,
+        };
+
+        assert_eq!(summary_at(Some(&expired), now), "week -- · -- · --");
+        assert!(expiration_lines_at(Some(&expired), now).is_empty());
+
+        let mixed = ProviderSnapshot {
+            reset_credit_expires_at: vec![
+                "2026-08-11T07:59:59Z".into(),
+                "2026-08-11T08:00:01Z".into(),
+            ],
+            ..expired
+        };
+        assert_eq!(summary_at(Some(&mixed), now), "week -- · -- · 2次");
+        let lines = expiration_lines_at(Some(&mixed), now);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("第 1 次"));
+    }
+
+    #[test]
+    fn official_result_is_published_while_deepseek_is_still_refreshing() {
+        let official_slot = Mutex::new(None);
+        let official_refreshing = Mutex::new(true);
+        let deepseek_refreshing = Mutex::new(true);
+
+        finish_official_refresh(
+            &official_slot,
+            &official_refreshing,
+            ProviderSnapshot::failure("unavailable", "official error"),
+        );
+
+        assert!(official_slot.lock().unwrap().is_some());
+        assert!(!*official_refreshing.lock().unwrap());
+        assert!(*deepseek_refreshing.lock().unwrap());
+    }
+
+    #[test]
+    fn deepseek_error_is_independent_and_keeps_the_last_success() {
+        let previous = ProviderSnapshot {
+            display_name: "DeepSeek".into(),
+            weekly_window: None,
+            reset_credits: None,
+            reset_credit_expires_at: vec![],
+            status: "ok".into(),
+            message: None,
+            balance: Some(11.61),
+            currency: Some("CNY".into()),
+        };
+        let snapshot_slot = Mutex::new(Some(previous));
+        let error_slot = Mutex::new(None);
+        let refreshing = Mutex::new(true);
+
+        finish_deepseek_refresh(
+            &snapshot_slot,
+            &error_slot,
+            &refreshing,
+            Err("DeepSeek 余额查询失败"),
+        );
+
+        assert_eq!(
+            snapshot_slot.lock().unwrap().as_ref().unwrap().balance,
+            Some(11.61)
+        );
+        assert_eq!(
+            error_slot.lock().unwrap().as_deref(),
+            Some("DeepSeek 余额查询失败")
+        );
+        assert!(!*refreshing.lock().unwrap());
+    }
 }

@@ -61,9 +61,32 @@ fi
 
 install_app() {
   local staging_bundle="/Applications/.${APP_NAME}.install-$$.app"
+  local signing_identity_hash
 
   rm -rf "$staging_bundle"
   /usr/bin/ditto "$APP_BUNDLE" "$staging_bundle"
+
+  if [[ -n "${CODEXBAR_SIGNING_IDENTITY:-}" ]]; then
+    signing_identity_hash="$(printf '%s' "$CODEXBAR_SIGNING_IDENTITY" | /usr/bin/tr '[:lower:]' '[:upper:]')"
+    if [[ ! "$signing_identity_hash" =~ ^[[:xdigit:]]{40}$ ]]; then
+      echo "CODEXBAR_SIGNING_IDENTITY must be a 40-character certificate hash" >&2
+      exit 1
+    fi
+    if ! /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+      | /usr/bin/awk -v expected="$signing_identity_hash" '$2 == expected { found = 1 } END { exit(found ? 0 : 1) }'; then
+      echo "CODEXBAR_SIGNING_IDENTITY does not match an available code-signing identity" >&2
+      exit 1
+    fi
+    /usr/bin/codesign \
+      --force \
+      --deep \
+      --sign "$signing_identity_hash" \
+      --timestamp=none \
+      --preserve-metadata=entitlements,flags \
+      "$staging_bundle"
+  else
+    echo "warning: CODEXBAR_SIGNING_IDENTITY is unset; installed app will keep its build signature" >&2
+  fi
   /usr/bin/codesign --verify --deep --strict "$staging_bundle"
 
   rm -rf "$INSTALLED_APP_BUNDLE"

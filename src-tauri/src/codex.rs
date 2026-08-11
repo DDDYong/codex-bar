@@ -1,7 +1,13 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CACHE_CONTROL, PRAGMA};
+use reqwest::{redirect::Policy, Url};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::models::{ProviderSnapshot, UsageWindow};
@@ -9,8 +15,71 @@ use crate::models::{ProviderSnapshot, UsageWindow};
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/api/codex/usage";
 const LEGACY_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const DEEPSEEK_BALANCE_URL: &str = "https://api.deepseek.com/user/balance";
+const CURRENT_PROVIDER_QUERY: &str = "SELECT name, provider_type, settings_config \
+    FROM providers \
+    WHERE app_type = 'codex' AND is_current = 1 \
+    ORDER BY id \
+    LIMIT 2";
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 const MAX_AUTH_BYTES: u64 = 256 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ApiEndpoint {
+    ChatGpt,
+    DeepSeek,
+}
+
+fn allowed_api_endpoint(url: &Url) -> Option<ApiEndpoint> {
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port_or_known_default() != Some(443)
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    match (url.host_str(), url.path()) {
+        (
+            Some("chatgpt.com"),
+            "/backend-api/api/codex/usage"
+            | "/backend-api/wham/usage"
+            | "/backend-api/wham/rate-limit-reset-credits",
+        ) => Some(ApiEndpoint::ChatGpt),
+        (Some("api.deepseek.com"), "/user/balance") => Some(ApiEndpoint::DeepSeek),
+        _ => None,
+    }
+}
+
+fn checked_api_url(raw: &str, expected: ApiEndpoint) -> Result<Url, &'static str> {
+    let url = Url::parse(raw).map_err(|_| "API endpoint is invalid.")?;
+    if allowed_api_endpoint(&url) == Some(expected) {
+        Ok(url)
+    } else {
+        Err("API endpoint was rejected by the security policy.")
+    }
+}
+
+fn redirect_allowed(from: &Url, to: &Url, carries_authorization: bool) -> bool {
+    !carries_authorization
+        && allowed_api_endpoint(from).is_some()
+        && allowed_api_endpoint(from) == allowed_api_endpoint(to)
+}
+
+pub(crate) fn authenticated_redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        let allowed = attempt
+            .previous()
+            .last()
+            .is_some_and(|from| redirect_allowed(from, attempt.url(), true));
+        if allowed {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
 
 struct Auth {
     access_token: String,
@@ -156,6 +225,32 @@ fn collect_reset_credit_expirations(value: &Value) -> Vec<String> {
     expirations.sort();
     expirations.dedup();
     expirations
+}
+
+fn normalize_reset_credits(
+    reset_credits: Option<u64>,
+    expirations: Vec<String>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (Option<u64>, Vec<String>) {
+    let had_expirations = !expirations.is_empty();
+    let mut future: Vec<(String, chrono::DateTime<chrono::Utc>)> = expirations
+        .into_iter()
+        .filter_map(|value| {
+            let expiration = chrono::DateTime::parse_from_rfc3339(&value)
+                .ok()?
+                .with_timezone(&chrono::Utc);
+            (expiration > now).then_some((value, expiration))
+        })
+        .collect();
+    future.sort_by_key(|(_, expiration)| *expiration);
+    future.dedup_by(|left, right| left.1 == right.1);
+    let future: Vec<String> = future.into_iter().map(|(value, _)| value).collect();
+    let reset_credits = if had_expirations && future.is_empty() {
+        None
+    } else {
+        reset_credits
+    };
+    (reset_credits, future)
 }
 
 fn scale_ratio_field(key: &str, value: f64) -> bool {
@@ -310,6 +405,160 @@ async fn limited_json(mut response: reqwest::Response) -> Result<Value, ()> {
     serde_json::from_slice(&bytes).map_err(|_| ())
 }
 
+#[derive(Default, Deserialize)]
+struct ProviderAuthConfig {
+    #[serde(rename = "OPENAI_API_KEY")]
+    api_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ProviderSettingsConfig {
+    api_key: Option<String>,
+    #[serde(default)]
+    auth: ProviderAuthConfig,
+}
+
+#[derive(Deserialize)]
+struct ProviderRow {
+    name: String,
+    provider_type: Option<String>,
+    settings_config: String,
+}
+
+fn is_valid_api_key(value: &str) -> bool {
+    value.starts_with("sk-")
+        && (21..=4_096).contains(&value.len())
+        && !value.chars().any(char::is_control)
+}
+
+fn api_key_from_settings_config(raw: &str) -> Result<String, &'static str> {
+    let config: ProviderSettingsConfig =
+        serde_json::from_str(raw).map_err(|_| "DeepSeek Provider 配置格式异常")?;
+    let api_key = config
+        .api_key
+        .or(config.auth.api_key)
+        .ok_or("DeepSeek Provider 配置中缺少 API Key")?;
+    if !is_valid_api_key(&api_key) {
+        return Err("DeepSeek Provider API Key 格式异常");
+    }
+    Ok(api_key)
+}
+
+fn current_deepseek_api_key_from_rows(raw: &[u8]) -> Result<String, &'static str> {
+    let rows: Vec<ProviderRow> =
+        serde_json::from_slice(raw).map_err(|_| "cc-switch Provider 查询结果格式异常")?;
+    let [row] = rows.as_slice() else {
+        return Err("cc-switch 当前 Codex Provider 不可用");
+    };
+    let is_deepseek = row.name.eq_ignore_ascii_case("deepseek")
+        || row
+            .provider_type
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("deepseek"));
+    if !is_deepseek {
+        return Err("cc-switch 当前 Codex Provider 不是 DeepSeek");
+    }
+    api_key_from_settings_config(&row.settings_config)
+}
+
+fn read_current_deepseek_api_key(path: &Path) -> Result<String, &'static str> {
+    let output = Command::new("/usr/bin/sqlite3")
+        .arg("-readonly")
+        .arg("-json")
+        .arg(path)
+        .arg(CURRENT_PROVIDER_QUERY)
+        .output()
+        .map_err(|_| "无法只读查询 cc-switch 数据库")?;
+    if !output.status.success() || output.stdout.len() as u64 > MAX_AUTH_BYTES {
+        return Err("无法只读查询 cc-switch 数据库");
+    }
+    current_deepseek_api_key_from_rows(&output.stdout)
+}
+
+fn parse_amount(value: &Value, key: &str) -> Result<f64, &'static str> {
+    let raw = value.get(key).ok_or("DeepSeek 余额字段缺失")?;
+    let amount = raw
+        .as_str()
+        .and_then(|text| text.parse::<f64>().ok())
+        .or_else(|| raw.as_f64())
+        .ok_or("DeepSeek 余额字段格式异常")?;
+    if !amount.is_finite() || amount < 0.0 {
+        return Err("DeepSeek 余额字段超出有效范围");
+    }
+    Ok(amount)
+}
+
+fn parse_currency(value: &Value) -> Result<String, &'static str> {
+    let currency = value
+        .get("currency")
+        .and_then(Value::as_str)
+        .ok_or("DeepSeek 币种字段缺失")?;
+    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        return Err("DeepSeek 币种字段格式异常");
+    }
+    Ok(currency.to_ascii_uppercase())
+}
+
+fn parse_deepseek_balance(body: &Value) -> Result<(f64, String), &'static str> {
+    if body.get("is_available").and_then(Value::as_bool) != Some(true) {
+        return Err("DeepSeek 余额服务不可用");
+    }
+    let infos = body
+        .get("balance_infos")
+        .and_then(Value::as_array)
+        .ok_or("DeepSeek 余额数据格式异常")?;
+    let primary = infos.first().ok_or("DeepSeek 余额数据为空")?;
+    Ok((
+        parse_amount(primary, "total_balance")?,
+        parse_currency(primary)?,
+    ))
+}
+
+pub async fn fetch_deepseek_balance(
+    client: &reqwest::Client,
+) -> Result<ProviderSnapshot, &'static str> {
+    let db_path = dirs::home_dir()
+        .map(|home| home.join(".cc-switch/cc-switch.db"))
+        .ok_or("无法确定 cc-switch 数据库路径")?;
+    let api_key = read_current_deepseek_api_key(&db_path)?;
+
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {api_key}"))
+        .map_err(|_| "DeepSeek Provider API Key 格式异常")?;
+    authorization.set_sensitive(true);
+    let balance_url = checked_api_url(DEEPSEEK_BALANCE_URL, ApiEndpoint::DeepSeek)
+        .map_err(|_| "DeepSeek 余额地址不符合安全策略")?;
+
+    let response = client
+        .get(balance_url)
+        .header(AUTHORIZATION, authorization)
+        .header(ACCEPT, HeaderValue::from_static("application/json"))
+        .send()
+        .await
+        .map_err(|_| "DeepSeek 余额查询网络错误")?;
+
+    if allowed_api_endpoint(response.url()) != Some(ApiEndpoint::DeepSeek)
+        || !response.status().is_success()
+    {
+        return Err("DeepSeek 余额查询失败");
+    }
+
+    let body: Value = limited_json(response)
+        .await
+        .map_err(|_| "DeepSeek 余额响应格式异常")?;
+    let (total, currency) = parse_deepseek_balance(&body)?;
+
+    Ok(ProviderSnapshot {
+        display_name: "DeepSeek".into(),
+        weekly_window: None,
+        reset_credits: None,
+        reset_credit_expires_at: vec![],
+        status: "ok".into(),
+        message: None,
+        balance: Some(total),
+        currency: Some(currency),
+    })
+}
+
 pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
     let auth = match load_auth() {
         Ok(value) => value,
@@ -321,27 +570,49 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
     };
 
     let usage_urls = usage_urls();
+    let primary_url = match checked_api_url(usage_urls[0], ApiEndpoint::ChatGpt) {
+        Ok(url) => url,
+        Err(message) => return ProviderSnapshot::failure("unavailable", message),
+    };
+    let legacy_url = match checked_api_url(usage_urls[1], ApiEndpoint::ChatGpt) {
+        Ok(url) => url,
+        Err(message) => return ProviderSnapshot::failure("unavailable", message),
+    };
+    let credits_url = match checked_api_url(CREDITS_URL, ApiEndpoint::ChatGpt) {
+        Ok(url) => url,
+        Err(message) => return ProviderSnapshot::failure("unavailable", message),
+    };
     let (usage_result, credits_result) = tokio::join!(
         client
-            .get(usage_urls[0])
+            .get(primary_url)
             .headers(request_headers.clone())
             .send(),
         client
-            .get(CREDITS_URL)
+            .get(credits_url)
             .headers(request_headers.clone())
             .send(),
     );
 
     let usage_response = match usage_result {
-        Ok(response) if response.status().is_success() => response,
+        Ok(response)
+            if allowed_api_endpoint(response.url()) == Some(ApiEndpoint::ChatGpt)
+                && response.status().is_success() =>
+        {
+            response
+        }
         Ok(_) => {
             match client
-                .get(usage_urls[1])
+                .get(legacy_url)
                 .headers(request_headers.clone())
                 .send()
                 .await
             {
-                Ok(response) if response.status().is_success() => response,
+                Ok(response)
+                    if allowed_api_endpoint(response.url()) == Some(ApiEndpoint::ChatGpt)
+                        && response.status().is_success() =>
+                {
+                    response
+                }
                 Ok(response) => {
                     let (status, message) = safe_http_failure(response.status());
                     return ProviderSnapshot::failure(status, message);
@@ -427,50 +698,56 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
         .unwrap_or_default();
 
     let (reset_credits, reset_credit_expires_at) = match credits_result {
-        Ok(response) if response.status().is_success() => match limited_json(response).await.ok() {
-            Some(value) => (
-                integer(
-                    &value,
-                    &[
-                        "available_count",
-                        "availableCount",
-                        "remaining",
-                        "count",
-                        "quantity",
-                    ],
-                )
-                .or(usage_reset_credits),
-                {
-                    let expirations = collect_reset_credit_expirations(&value);
-                    if expirations.is_empty() {
-                        usage_reset_credit_expires_at
-                    } else {
-                        expirations
-                    }
-                },
-            ),
-            None => (usage_reset_credits, usage_reset_credit_expires_at),
-        },
+        Ok(response)
+            if allowed_api_endpoint(response.url()) == Some(ApiEndpoint::ChatGpt)
+                && response.status().is_success() =>
+        {
+            match limited_json(response).await.ok() {
+                Some(value) => (
+                    integer(
+                        &value,
+                        &[
+                            "available_count",
+                            "availableCount",
+                            "remaining",
+                            "count",
+                            "quantity",
+                        ],
+                    )
+                    .or(usage_reset_credits),
+                    {
+                        let expirations = collect_reset_credit_expirations(&value);
+                        if expirations.is_empty() {
+                            usage_reset_credit_expires_at
+                        } else {
+                            expirations
+                        }
+                    },
+                ),
+                None => (usage_reset_credits, usage_reset_credit_expires_at),
+            }
+        }
         _ => (usage_reset_credits, usage_reset_credit_expires_at),
     };
+    let (reset_credits, reset_credit_expires_at) =
+        normalize_reset_credits(reset_credits, reset_credit_expires_at, chrono::Utc::now());
 
     ProviderSnapshot {
-        provider: "codex".into(),
         display_name: "CODEX".into(),
-        plan: pick_string(&usage, &["plan_type", "planType"]).map(|value| value.to_uppercase()),
-        short_window,
         weekly_window,
         reset_credits,
         reset_credit_expires_at,
-        updated_at: chrono::Utc::now().to_rfc3339(),
         status: "ok".into(),
         message: None,
+        balance: None,
+        currency: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn prefers_the_current_codex_usage_endpoint_before_the_legacy_endpoint() {
@@ -480,6 +757,72 @@ mod tests {
                 "https://chatgpt.com/backend-api/api/codex/usage",
                 "https://chatgpt.com/backend-api/wham/usage",
             ]
+        );
+    }
+
+    #[test]
+    fn endpoint_policy_allows_only_exact_https_hosts_and_paths() {
+        for allowed in [USAGE_URL, LEGACY_USAGE_URL, CREDITS_URL] {
+            assert_eq!(
+                allowed_api_endpoint(&Url::parse(allowed).unwrap()),
+                Some(ApiEndpoint::ChatGpt)
+            );
+        }
+        assert_eq!(
+            allowed_api_endpoint(&Url::parse(DEEPSEEK_BALANCE_URL).unwrap()),
+            Some(ApiEndpoint::DeepSeek)
+        );
+        for rejected in [
+            "http://chatgpt.com/backend-api/api/codex/usage",
+            "https://evil.chatgpt.com/backend-api/api/codex/usage",
+            "https://chatgpt.com/backend-api/api/codex/other",
+            "https://chatgpt.com/backend-api/api/codex/usage?next=evil",
+            "https://deepseek.com/user/balance",
+            "https://api.deepseek.com/user/other",
+        ] {
+            assert_eq!(allowed_api_endpoint(&Url::parse(rejected).unwrap()), None);
+        }
+    }
+
+    #[test]
+    fn authenticated_redirects_are_rejected_even_within_the_allowlist() {
+        let usage = Url::parse(USAGE_URL).unwrap();
+        let legacy = Url::parse(LEGACY_USAGE_URL).unwrap();
+        let deepseek = Url::parse(DEEPSEEK_BALANCE_URL).unwrap();
+
+        assert!(!redirect_allowed(&usage, &legacy, true));
+        assert!(!redirect_allowed(&usage, &deepseek, true));
+        assert!(redirect_allowed(&usage, &legacy, false));
+        assert!(!redirect_allowed(&usage, &deepseek, false));
+    }
+
+    #[test]
+    fn reset_credit_normalization_drops_expired_boundaries_and_stale_count() {
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 8, 11, 8, 0, 0)
+            .single()
+            .unwrap();
+        let mixed = normalize_reset_credits(
+            Some(2),
+            vec![
+                "2026-08-11T07:59:59Z".into(),
+                "2026-08-11T08:00:00Z".into(),
+                "2026-08-11T08:00:01Z".into(),
+            ],
+            now,
+        );
+        assert_eq!(mixed.0, Some(2));
+        assert_eq!(mixed.1, vec!["2026-08-11T08:00:01Z"]);
+
+        let expired = normalize_reset_credits(
+            Some(2),
+            vec!["2026-08-11T07:59:59Z".into(), "2026-08-11T08:00:00Z".into()],
+            now,
+        );
+        assert_eq!(expired, (None, vec![]));
+        assert_eq!(
+            normalize_reset_credits(Some(2), vec![], now),
+            (Some(2), vec![])
         );
     }
 
@@ -573,5 +916,73 @@ mod tests {
         .unwrap();
         assert_eq!(short.remaining_percent, 51.0);
         assert_eq!(weekly.remaining_percent, 88.0);
+    }
+
+    #[test]
+    fn reads_only_the_exact_current_deepseek_provider_json_config() {
+        assert!(CURRENT_PROVIDER_QUERY.contains("app_type = 'codex' AND is_current = 1"));
+        assert!(!CURRENT_PROVIDER_QUERY
+            .to_ascii_lowercase()
+            .contains(" like "));
+        let rows = serde_json::to_vec(&serde_json::json!([{
+            "name": "DeepSeek",
+            "provider_type": "deepseek",
+            "settings_config": "{\"auth\":{\"OPENAI_API_KEY\":\"sk-current-valid-deepseek-key\"}}"
+        }]))
+        .unwrap();
+
+        assert_eq!(
+            current_deepseek_api_key_from_rows(&rows).unwrap(),
+            "sk-current-valid-deepseek-key"
+        );
+    }
+
+    #[test]
+    fn rejects_non_deepseek_current_provider_and_malformed_credentials() {
+        let rows = serde_json::to_vec(&serde_json::json!([{
+            "name": "OpenAI Official",
+            "provider_type": "openai",
+            "settings_config": "{\"api_key\":\"sk-current-valid-deepseek-key\"}"
+        }]))
+        .unwrap();
+        assert_eq!(
+            current_deepseek_api_key_from_rows(&rows),
+            Err("cc-switch 当前 Codex Provider 不是 DeepSeek")
+        );
+        assert_eq!(
+            current_deepseek_api_key_from_rows(b"[]"),
+            Err("cc-switch 当前 Codex Provider 不可用")
+        );
+        assert!(api_key_from_settings_config("not-json").is_err());
+        assert!(api_key_from_settings_config("{\"api_key\":\"invalid\"}").is_err());
+    }
+
+    #[test]
+    fn validates_deepseek_balance_amount_and_currency() {
+        let valid = serde_json::json!({
+            "is_available": true,
+            "balance_infos": [{"total_balance": "11.61", "currency": "cny"}]
+        });
+        assert_eq!(
+            parse_deepseek_balance(&valid).unwrap(),
+            (11.61, "CNY".into())
+        );
+
+        for invalid in [
+            serde_json::json!({
+                "is_available": true,
+                "balance_infos": [{"total_balance": "NaN", "currency": "CNY"}]
+            }),
+            serde_json::json!({
+                "is_available": true,
+                "balance_infos": [{"total_balance": "-0.01", "currency": "CNY"}]
+            }),
+            serde_json::json!({
+                "is_available": true,
+                "balance_infos": [{"total_balance": "1.00", "currency": "yuan"}]
+            }),
+        ] {
+            assert!(parse_deepseek_balance(&invalid).is_err());
+        }
     }
 }

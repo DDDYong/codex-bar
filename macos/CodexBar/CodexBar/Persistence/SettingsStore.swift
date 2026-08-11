@@ -34,6 +34,10 @@ struct AppSettings: Codable, Equatable {
     var sessionIndexEnabled: Bool
     var pluginSkillIndexEnabled: Bool
     var tokenHeatmapPeriod: TokenHeatmapPeriod
+    var launchAtLoginRequested: Bool?
+    var enabledProviderIDs: Set<ProviderID>?
+    var experimentalProvidersEnabled: Bool
+    var deepSeekPlatformUsageEnabled: Bool
 
     static let `default` = AppSettings(
         displayMode: .iconOnly,
@@ -41,11 +45,15 @@ struct AppSettings: Codable, Equatable {
         snapshotRetentionDays: 90,
         sessionIndexEnabled: true,
         pluginSkillIndexEnabled: true,
-        tokenHeatmapPeriod: .oneYear
+        tokenHeatmapPeriod: .oneYear,
+        launchAtLoginRequested: nil,
+        enabledProviderIDs: nil,
+        experimentalProvidersEnabled: false,
+        deepSeekPlatformUsageEnabled: false
     )
 
     private enum CodingKeys: String, CodingKey {
-        case displayMode, theme, snapshotRetentionDays, sessionIndexEnabled, pluginSkillIndexEnabled, tokenHeatmapPeriod
+        case displayMode, theme, snapshotRetentionDays, sessionIndexEnabled, pluginSkillIndexEnabled, tokenHeatmapPeriod, launchAtLoginRequested, enabledProviderIDs, experimentalProvidersEnabled, deepSeekPlatformUsageEnabled
     }
 
     init(
@@ -54,7 +62,11 @@ struct AppSettings: Codable, Equatable {
         snapshotRetentionDays: Int,
         sessionIndexEnabled: Bool,
         pluginSkillIndexEnabled: Bool,
-        tokenHeatmapPeriod: TokenHeatmapPeriod = .oneYear
+        tokenHeatmapPeriod: TokenHeatmapPeriod = .oneYear,
+        launchAtLoginRequested: Bool? = nil,
+        enabledProviderIDs: Set<ProviderID>? = nil,
+        experimentalProvidersEnabled: Bool = false,
+        deepSeekPlatformUsageEnabled: Bool = false
     ) {
         self.displayMode = displayMode
         self.theme = theme
@@ -62,6 +74,10 @@ struct AppSettings: Codable, Equatable {
         self.sessionIndexEnabled = sessionIndexEnabled
         self.pluginSkillIndexEnabled = pluginSkillIndexEnabled
         self.tokenHeatmapPeriod = tokenHeatmapPeriod
+        self.launchAtLoginRequested = launchAtLoginRequested
+        self.enabledProviderIDs = enabledProviderIDs
+        self.experimentalProvidersEnabled = experimentalProvidersEnabled
+        self.deepSeekPlatformUsageEnabled = deepSeekPlatformUsageEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +88,10 @@ struct AppSettings: Codable, Equatable {
         sessionIndexEnabled = try container.decode(Bool.self, forKey: .sessionIndexEnabled)
         pluginSkillIndexEnabled = try container.decode(Bool.self, forKey: .pluginSkillIndexEnabled)
         tokenHeatmapPeriod = try container.decodeIfPresent(TokenHeatmapPeriod.self, forKey: .tokenHeatmapPeriod) ?? .oneYear
+        launchAtLoginRequested = try container.decodeIfPresent(Bool.self, forKey: .launchAtLoginRequested)
+        enabledProviderIDs = try container.decodeIfPresent(Set<ProviderID>.self, forKey: .enabledProviderIDs)
+        experimentalProvidersEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalProvidersEnabled) ?? false
+        deepSeekPlatformUsageEnabled = try container.decodeIfPresent(Bool.self, forKey: .deepSeekPlatformUsageEnabled) ?? false
     }
 }
 
