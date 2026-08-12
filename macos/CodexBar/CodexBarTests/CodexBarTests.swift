@@ -526,6 +526,41 @@ final class CodexBarTests: XCTestCase {
         ))
     }
 
+    func testResetNormalizationClearsExpirationsWhenAvailableCountIsZero() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let futureExpiration = ISO8601DateFormatter().string(from: now.addingTimeInterval(3_600))
+
+        let normalized = ResetCreditsCachePolicy.currentValue(
+            CodexResetCredits(availableCount: 0, expiresAt: [futureExpiration]),
+            now: now
+        )
+
+        XCTAssertEqual(normalized, CodexResetCredits(availableCount: 0, expiresAt: []))
+    }
+
+    func testZeroResetFetchDoesNotRestoreCachedExpirations() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let previous = CodexUsageSnapshot(
+            plan: nil,
+            shortWindow: nil,
+            weeklyWindow: CodexUsageWindow(remainingPercent: 90, resetsAt: nil, windowSeconds: 604_800),
+            resetCredits: CodexResetCredits(
+                availableCount: 1,
+                expiresAt: [ISO8601DateFormatter().string(from: now.addingTimeInterval(3_600))]
+            ),
+            updatedAt: now.addingTimeInterval(-60)
+        )
+
+        let merged = ResetCreditsCachePolicy.merged(
+            fetched: CodexResetCredits(availableCount: 0, expiresAt: []),
+            previous: previous,
+            storedRecords: [],
+            now: now
+        )
+
+        XCTAssertEqual(merged, CodexResetCredits(availableCount: 0, expiresAt: []))
+    }
+
     func testMenuBarDisplayModesExplainThirdPartyContent() {
         XCTAssertEqual(MenuBarDisplayMode.detailed.thirdPartySummary, "图标 + 可用/预算/配额 + Provider 可核验明细")
         XCTAssertEqual(MenuBarDisplayMode.compact.thirdPartySummary, "图标 + 可用余额、Key 预算或配额")

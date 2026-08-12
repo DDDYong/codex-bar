@@ -183,6 +183,7 @@ fn expiration_lines(snapshot: Option<&ProviderSnapshot>) -> Vec<String> {
 }
 fn expiration_lines_at(snapshot: Option<&ProviderSnapshot>, now: DateTime<Local>) -> Vec<String> {
     snapshot
+        .filter(|s| s.reset_credits != Some(0))
         .map(|s| {
             s.reset_credit_expires_at
                 .iter()
@@ -578,6 +579,12 @@ mod tests {
         let lines = expiration_lines_at(Some(&mixed), now);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("第 1 次"));
+
+        let exhausted = ProviderSnapshot {
+            reset_credits: Some(0),
+            ..mixed
+        };
+        assert!(expiration_lines_at(Some(&exhausted), now).is_empty());
     }
 
     #[test]

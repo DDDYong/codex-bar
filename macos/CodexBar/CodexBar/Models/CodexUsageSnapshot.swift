@@ -150,6 +150,7 @@ enum ResetCreditsCachePolicy {
         now: Date
     ) -> CodexResetCredits {
         let fetchedValue = currentValue(fetched, now: now)
+        let fetchedReportsNoCredits = fetched.availableCount == 0
         let cachedValues = ([previous].compactMap { $0 }.map { ($0.resetCredits, $0.updatedAt) }
             + storedRecords.reversed().map {
                 (
@@ -165,13 +166,18 @@ enum ResetCreditsCachePolicy {
         return CodexResetCredits(
             availableCount: fetchedValue.availableCount
                 ?? cachedValues.lazy.compactMap(\.availableCount).first,
-            expiresAt: fetchedValue.expiresAt.isEmpty
+            expiresAt: fetchedReportsNoCredits
+                ? []
+                : fetchedValue.expiresAt.isEmpty
                 ? cachedValues.lazy.map(\.expiresAt).first(where: { !$0.isEmpty }) ?? []
                 : fetchedValue.expiresAt
         )
     }
 
     static func currentValue(_ value: CodexResetCredits, now: Date) -> CodexResetCredits {
+        guard value.availableCount != 0 else {
+            return CodexResetCredits(availableCount: 0, expiresAt: [])
+        }
         let future = futureExpirations(value.expiresAt, now: now)
         let count = value.expiresAt.isEmpty || !future.isEmpty ? value.availableCount : nil
         return CodexResetCredits(
@@ -188,10 +194,9 @@ enum ResetCreditsCachePolicy {
         let age = now.timeIntervalSince(capturedAt)
         guard age >= -allowedClockSkew, age <= maximumAge else { return nil }
 
-        let future = futureExpirations(value.expiresAt, now: now)
-        let count = value.expiresAt.isEmpty || !future.isEmpty ? value.availableCount : nil
-        guard count != nil || !future.isEmpty else { return nil }
-        return CodexResetCredits(availableCount: count, expiresAt: future)
+        let current = currentValue(value, now: now)
+        guard current.availableCount != nil || !current.expiresAt.isEmpty else { return nil }
+        return current
     }
 
     static func isAvailable(

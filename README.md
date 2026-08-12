@@ -60,6 +60,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
 - cc-switch 遥测以 SQLite 只读模式访问，并先校验 schema；查询不选择 `error_message`、请求体、响应体或 Provider 配置字段。
 - 实验 Provider 默认关闭，不在 CodexBar 中保存其 API 凭据；MiniMax CLI 的标准错误会被丢弃，不写日志或回显。
 - 全设备 Token 数据通过本机 Codex CLI 的 app-server 读取，应用只持久化统计汇总与每日 Token 桶。
+- GitHub Release 的 DMG 不包含构建者的 UserDefaults、钥匙串、Codex 会话、浏览器 Cookie 或 Application Support 数据；安装后只读取当前 macOS 用户本机的数据。
 - 本应用自己的统计文件位于：
 
   ```text
@@ -97,7 +98,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
 
 脚本会停止旧进程、构建 Debug 版本、安装到 `/Applications/CodexBar.app` 并启动。它也会清理遗留的 `/Applications/Codex Bar.app`，确保系统只保留一个应用副本。
 
-当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.4` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
+当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.5` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
 
 可用参数：
 

@@ -201,11 +201,7 @@ private struct MenuBarContent: View {
 
             MenuBarPanelDivider()
 
-            MenuBarPanelButton(
-                title: "打开仪表盘",
-                shortcutLabel: "⌘D",
-                shortcut: "d"
-            ) {
+            MenuBarPanelButton(title: "打开仪表盘") {
                 appState.selectedRoute = .dashboard
                 openWindow(id: AppConfiguration.dashboardWindowID)
                 DispatchQueue.main.async {

@@ -232,6 +232,9 @@ fn normalize_reset_credits(
     expirations: Vec<String>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> (Option<u64>, Vec<String>) {
+    if reset_credits == Some(0) {
+        return (Some(0), vec![]);
+    }
     let had_expirations = !expirations.is_empty();
     let mut future: Vec<(String, chrono::DateTime<chrono::Utc>)> = expirations
         .into_iter()
@@ -823,6 +826,10 @@ mod tests {
         assert_eq!(
             normalize_reset_credits(Some(2), vec![], now),
             (Some(2), vec![])
+        );
+        assert_eq!(
+            normalize_reset_credits(Some(0), vec!["2026-08-11T08:00:01Z".into()], now),
+            (Some(0), vec![])
         );
     }
 
