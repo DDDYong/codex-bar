@@ -62,9 +62,24 @@ fi
 install_app() {
   local staging_bundle="/Applications/.${APP_NAME}.install-$$.app"
   local signing_identity_hash
+  local detected_signing_identities
+  local detected_identity_count
 
   rm -rf "$staging_bundle"
   /usr/bin/ditto "$APP_BUNDLE" "$staging_bundle"
+
+  if [[ -z "${CODEXBAR_SIGNING_IDENTITY:-}" ]]; then
+    detected_signing_identities="$(
+      /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+        | /usr/bin/awk '/Apple Development:/ { print $2 }' \
+        || true
+    )"
+    detected_identity_count="$(printf '%s\n' "$detected_signing_identities" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')"
+    if [[ "$detected_identity_count" == "1" ]]; then
+      CODEXBAR_SIGNING_IDENTITY="$detected_signing_identities"
+      echo "info: using the only available Apple Development signing identity"
+    fi
+  fi
 
   if [[ -n "${CODEXBAR_SIGNING_IDENTITY:-}" ]]; then
     signing_identity_hash="$(printf '%s' "$CODEXBAR_SIGNING_IDENTITY" | /usr/bin/tr '[:lower:]' '[:upper:]')"

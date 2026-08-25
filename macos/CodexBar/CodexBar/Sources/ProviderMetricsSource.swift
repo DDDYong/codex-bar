@@ -326,24 +326,22 @@ final class OpenRouterMetricsSource: ProviderMetricsSource, ProviderCredentialVa
         var issues: [String] = []
         var firstError: Error?
 
-        if credentialStore.contains(providerID: providerID, kind: .managementKey) {
-            do {
-                let credential = try credentialStore.read(providerID: providerID, kind: .managementKey)
+        do {
+            if let credential = try readCredentialIfPresent(kind: .managementKey) {
                 creditsData = try await client.get(creditsURL, bearerToken: credential)
-            } catch {
-                firstError = error
-                issues.append("账户 credits 暂不可用")
             }
+        } catch {
+            firstError = error
+            issues.append("账户 credits 暂不可用")
         }
 
-        if credentialStore.contains(providerID: providerID, kind: .apiKey) {
-            do {
-                let credential = try credentialStore.read(providerID: providerID, kind: .apiKey)
+        do {
+            if let credential = try readCredentialIfPresent(kind: .apiKey) {
                 keyData = try await client.get(keyURL, bearerToken: credential)
-            } catch {
-                if firstError == nil { firstError = error }
-                issues.append("当前 Key 用量暂不可用")
             }
+        } catch {
+            if firstError == nil { firstError = error }
+            issues.append("当前 Key 用量暂不可用")
         }
 
         guard creditsData != nil || keyData != nil else {
@@ -368,6 +366,14 @@ final class OpenRouterMetricsSource: ProviderMetricsSource, ProviderCredentialVa
             )
         }
         return snapshot
+    }
+
+    private func readCredentialIfPresent(kind: ProviderCredentialKind) throws -> String? {
+        do {
+            return try credentialStore.read(providerID: providerID, kind: kind)
+        } catch ProviderCredentialStoreError.notFound {
+            return nil
+        }
     }
 
     static func parseSnapshot(
@@ -520,10 +526,12 @@ final class SiliconFlowMetricsSource: ProviderMetricsSource, ProviderCredentialV
     }
 
     func fetchSnapshot() async throws -> ProviderFinancialSnapshot {
-        guard isConfigured else {
+        let credential: String
+        do {
+            credential = try credentialStore.read(providerID: providerID, kind: .apiKey)
+        } catch ProviderCredentialStoreError.notFound {
             throw ProviderMetricsError.credentialMissing(providerID.displayName)
         }
-        let credential = try credentialStore.read(providerID: providerID, kind: .apiKey)
         let data = try await client.get(userInfoURL, bearerToken: credential)
         return try Self.parseSnapshot(from: data)
     }

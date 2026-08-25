@@ -98,7 +98,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
 
 脚本会停止旧进程、构建 Debug 版本、安装到 `/Applications/CodexBar.app` 并启动。它也会清理遗留的 `/Applications/Codex Bar.app`，确保系统只保留一个应用副本。
 
-当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.5` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
+当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.6` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
 
 可用参数：
 
@@ -109,7 +109,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
 ./script/build_and_run.sh --telemetry  # 启动后输出应用 telemetry 日志
 ```
 
-如需用本机证书重新签名安装副本，必须显式传入 `security find-identity -v -p codesigning` 输出中的 40 位证书哈希；未配置时脚本保留 Xcode 构建签名，不会自动挑选任意证书：
+安装时脚本会优先使用本机唯一可用的 Apple Development 证书重新签名，避免每次 Debug 构建都生成新的 ad-hoc 身份；如果本机有多个证书，可显式传入 `security find-identity -v -p codesigning` 输出中的 40 位证书哈希。没有可自动选择的证书时会保留 Xcode 构建签名并输出警告：
 
 ```bash
 CODEXBAR_SIGNING_IDENTITY=<40 位证书哈希> ./script/build_and_run.sh

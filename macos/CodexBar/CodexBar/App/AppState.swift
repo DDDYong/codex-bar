@@ -208,7 +208,8 @@ final class AppState: ObservableObject {
         }
         self.providerMetricsSources = sources
         self.providerCredentialStore = providerCredentialStore
-        self.legacyDeepSeekConfigured = deepSeekConfigured || deepSeekBalanceSource != nil
+        self.legacyDeepSeekConfigured = deepSeekConfigured
+            || (deepSeekBalanceSource != nil && providerMetricsSources.isEmpty)
         self.proxyUsageSource = proxyUsageSource
         _ = deepSeekProviderID
         self.launchAtLoginManager = launchAtLoginManager
@@ -218,11 +219,19 @@ final class AppState: ObservableObject {
         let settings = settingsStore.load()
         self.experimentalProvidersEnabled = settings.experimentalProvidersEnabled
         self.deepSeekPlatformUsageEnabled = settings.deepSeekPlatformUsageEnabled
-        let configuredProviderIDs = Set(sources.values.filter(\.isConfigured).map(\.providerID))
-            .union(self.legacyDeepSeekConfigured ? [.deepseek] : [])
-        self.enabledProviderIDs = enabledProviderIDs
-            ?? settings.enabledProviderIDs
-            ?? configuredProviderIDs
+        if let enabledProviderIDs {
+            self.enabledProviderIDs = enabledProviderIDs
+        } else if let savedProviderIDs = settings.enabledProviderIDs {
+            self.enabledProviderIDs = savedProviderIDs
+        } else {
+            // Credential-backed providers stay opt-in on first launch. Discovering them here
+            // would access the Keychain before the user has enabled the provider.
+            let configuredProviderIDs = Set(sources.values.filter {
+                $0.providerID.credentialKinds.isEmpty && $0.isConfigured
+            }.map(\.providerID))
+                .union(self.legacyDeepSeekConfigured ? [.deepseek] : [])
+            self.enabledProviderIDs = configuredProviderIDs
+        }
         self.displayMode = settings.displayMode
         self.theme = settings.theme
         self.tokenHeatmapPeriod = settings.tokenHeatmapPeriod
@@ -257,7 +266,8 @@ final class AppState: ObservableObject {
     }
 
     var configuredProviderIDs: [ProviderID] {
-        ProviderID.allCases.filter { effectiveEnabledProviderIDs.contains($0) && isProviderConfigured($0) }
+        // This is presentation state. Do not turn a header render into a Keychain probe.
+        ProviderID.allCases.filter { effectiveEnabledProviderIDs.contains($0) }
     }
 
     var effectiveEnabledProviderIDs: Set<ProviderID> {
@@ -486,14 +496,6 @@ final class AppState: ObservableObject {
                 endProviderRefresh(currentProviderID)
                 return nil
             }
-            guard source.isConfigured else {
-                providerErrors[currentProviderID] = ProviderMetricsError
-                    .credentialMissing(currentProviderID.displayName)
-                    .localizedDescription
-                endProviderRefresh(currentProviderID)
-                return nil
-            }
-
             return Task { @MainActor [weak self] in
                 guard let self else { return nil }
                 defer { self.endProviderRefresh(currentProviderID) }

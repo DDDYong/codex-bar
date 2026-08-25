@@ -394,9 +394,43 @@ final class CodexBarTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 0)
         )
 
-        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "Week 68% · -- · 2 Resets")
-        XCTAssertEqual(MenuBarPresentation.title(for: .compact, snapshot: snapshot), "Week 68%")
+        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "5h -- · -- · Week 68% · -- · 2 Resets")
+        XCTAssertEqual(MenuBarPresentation.title(for: .compact, snapshot: snapshot), "5h -- · W 68%")
         XCTAssertEqual(MenuBarPresentation.title(for: .iconOnly, snapshot: snapshot), "")
+    }
+
+    func testMenuBarPlacesFiveHourUsageBeforeWeeklyUsage() {
+        let snapshot = CodexUsageSnapshot(
+            plan: nil,
+            shortWindow: CodexUsageWindow(
+                remainingPercent: 82,
+                resetsAt: "2099-01-04T12:00:00Z",
+                windowSeconds: 18_000
+            ),
+            weeklyWindow: CodexUsageWindow(remainingPercent: 100, resetsAt: nil, windowSeconds: 604_800),
+            resetCredits: CodexResetCredits(availableCount: 1, expiresAt: []),
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        XCTAssertEqual(
+            MenuBarPresentation.title(for: .detailed, snapshot: snapshot),
+            "5h 82% · Sun · Week 100% · -- · 1 Reset"
+        )
+        XCTAssertEqual(MenuBarPresentation.title(for: .compact, snapshot: snapshot), "5h 82% · W 100%")
+        XCTAssertEqual(
+            MenuBarPresentation.fiveHourDropdownLine(
+                snapshot,
+                formattedExpiry: { _ in "2026-08-26 04:15" }
+            ),
+            "5h 82% · 2026-08-26 04:15"
+        )
+        XCTAssertEqual(
+            MenuBarPresentation.chatGPTDropdownLine(
+                snapshot,
+                formattedExpiry: { _ in "2026-08-26 04:15" }
+            ),
+            "ChatGPT: 5h 82% · 2026-08-26 04:15"
+        )
     }
 
     func testMenuBarOfficialSummaryUsesEnglishWeekdayAndResetLabels() {
@@ -421,6 +455,10 @@ final class CodexBarTests: XCTestCase {
             MenuBarStamp.expiryString("2026-08-12T17:30:00Z"),
             "2026-08-13 01:30"
         )
+        XCTAssertEqual(
+            MenuBarStamp.shortExpiryString("2026-08-12T17:30:00Z"),
+            "08-13 01:30"
+        )
     }
 
     func testMenuBarShowsUnknownWhenResetCountIsUnavailable() {
@@ -433,7 +471,7 @@ final class CodexBarTests: XCTestCase {
         )
 
         XCTAssertEqual(MenuBarPresentation.summary(snapshot), "Week 97% · -- · --")
-        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "Week 97% · -- · --")
+        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "5h -- · -- · Week 97% · -- · --")
     }
 
     func testResetCacheUsesOnlyFreshValuesAndFiltersExpiredGrants() {
@@ -593,7 +631,7 @@ final class CodexBarTests: XCTestCase {
         )
 
         XCTAssertEqual(items, [
-            MenuBarProviderItem(providerType: .officialCodex, title: "Week 68% · -- · 2 Resets"),
+            MenuBarProviderItem(providerType: .officialCodex, title: "5h -- · -- · Week 68% · -- · 2 Resets"),
             MenuBarProviderItem(providerType: .deepseek, title: "¥11.61 · 充值¥11.61 · 赠送¥0.00")
         ])
     }
@@ -670,7 +708,7 @@ final class CodexBarTests: XCTestCase {
             isRefreshingDeepSeek: true
         )
 
-        XCTAssertEqual(items[0], MenuBarProviderItem(providerType: .officialCodex, title: "Week 99%"))
+        XCTAssertEqual(items[0], MenuBarProviderItem(providerType: .officialCodex, title: "5h -- · W 99%"))
         XCTAssertEqual(items[1], MenuBarProviderItem(providerType: .deepseek, title: "指标查询中"))
     }
 
@@ -2242,6 +2280,54 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(store.load().enabledProviderIDs, [.deepseek, .openRouter])
     }
 
+    @MainActor
+    func testAppStateUsesSavedProviderSelectionBeforeConfigurationDiscovery() {
+        let suiteName = "CodexBarTests.ProviderSelection.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var settings = AppSettings.default
+        settings.enabledProviderIDs = []
+        let settingsStore = SettingsStore(defaults: defaults)
+        settingsStore.save(settings)
+
+        let source = ConfigurationProbeCountingProviderMetricsSource(providerID: .deepseek)
+        let state = AppState(
+            settingsStore: settingsStore,
+            providerMetricsSources: [source]
+        )
+
+        XCTAssertTrue(state.enabledProviderIDs.isEmpty)
+        XCTAssertEqual(source.configurationProbeCount, 0)
+    }
+
+    @MainActor
+    func testAppStateDoesNotDiscoverKeychainBackedProvidersOnFirstLaunch() {
+        let suiteName = "CodexBarTests.FirstLaunchProviderDiscovery.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let source = ConfigurationProbeCountingProviderMetricsSource(providerID: .deepseek)
+        let state = AppState(
+            settingsStore: SettingsStore(defaults: defaults),
+            providerMetricsSources: [source]
+        )
+
+        XCTAssertTrue(state.enabledProviderIDs.isEmpty)
+        XCTAssertEqual(source.configurationProbeCount, 0)
+    }
+
+    @MainActor
+    func testProviderRefreshFetchesWithoutAConfigurationProbe() async {
+        let source = ConfigurationProbeCountingProviderMetricsSource(providerID: .deepseek)
+        let state = AppState(providerMetricsSources: [source], enabledProviderIDs: [.deepseek])
+
+        await state.refreshProviderMetrics(providerID: .deepseek)
+
+        XCTAssertEqual(source.configurationProbeCount, 0)
+        XCTAssertEqual(source.fetchCallCount, 1)
+    }
+
     func testSettingsStoreDefaultsExperimentalProvidersOffAndPersistsOptIn() {
         let suiteName = "CodexBarTests.ExperimentalProviders.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -2972,6 +3058,28 @@ private final class StubProviderMetricsSource: ProviderMetricsSource, ProviderCr
     }
 
     func validateCredential(kind: ProviderCredentialKind) async throws {}
+}
+
+private final class ConfigurationProbeCountingProviderMetricsSource: ProviderMetricsSource {
+    let providerID: ProviderID
+    let capabilities: ProviderCapabilities
+    private(set) var configurationProbeCount = 0
+    private(set) var fetchCallCount = 0
+
+    init(providerID: ProviderID) {
+        self.providerID = providerID
+        capabilities = providerID.capabilities
+    }
+
+    var isConfigured: Bool {
+        configurationProbeCount += 1
+        return true
+    }
+
+    func fetchSnapshot() async throws -> ProviderFinancialSnapshot {
+        fetchCallCount += 1
+        throw ProviderMetricsError.credentialMissing(providerID.displayName)
+    }
 }
 
 private final class ControlledProviderMetricsSource: ProviderMetricsSource {

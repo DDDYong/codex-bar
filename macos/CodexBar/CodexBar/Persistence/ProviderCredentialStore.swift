@@ -42,6 +42,7 @@ final class KeychainProviderCredentialStore: ProviderCredentialStoring {
 
     private let cacheLock = NSLock()
     private var cachedCredentials: [String: String] = [:]
+    private var cachedPresence: [String: Bool] = [:]
     private var blockedReads: Set<String> = []
 
     static func accountName(providerID: ProviderID, kind: ProviderCredentialKind) -> String {
@@ -50,6 +51,7 @@ final class KeychainProviderCredentialStore: ProviderCredentialStoring {
 
     func contains(providerID: ProviderID, kind: ProviderCredentialKind) -> Bool {
         let account = Self.accountName(providerID: providerID, kind: kind)
+        if let presence = cachedPresence(for: account) { return presence }
         if cachedCredential(for: account) != nil { return true }
 
         var result: CFTypeRef?
@@ -59,7 +61,11 @@ final class KeychainProviderCredentialStore: ProviderCredentialStoring {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         query[kSecReturnAttributes as String] = true
         query[kSecUseAuthenticationContext as String] = authenticationContext
-        return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess || status == errSecItemNotFound {
+            cachePresence(status == errSecSuccess, for: account)
+        }
+        return status == errSecSuccess
     }
 
     func read(providerID: ProviderID, kind: ProviderCredentialKind) throws -> String {
@@ -135,6 +141,12 @@ final class KeychainProviderCredentialStore: ProviderCredentialStoring {
         return cachedCredentials[account]
     }
 
+    private func cachedPresence(for account: String) -> Bool? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return self.cachedPresence[account]
+    }
+
     private func isReadBlocked(for account: String) -> Bool {
         cacheLock.lock()
         defer { cacheLock.unlock() }
@@ -144,7 +156,14 @@ final class KeychainProviderCredentialStore: ProviderCredentialStoring {
     private func cache(_ credential: String, for account: String) {
         cacheLock.lock()
         cachedCredentials[account] = credential
+        cachedPresence[account] = true
         blockedReads.remove(account)
+        cacheLock.unlock()
+    }
+
+    private func cachePresence(_ present: Bool, for account: String) {
+        cacheLock.lock()
+        cachedPresence[account] = present
         cacheLock.unlock()
     }
 
@@ -157,6 +176,7 @@ final class KeychainProviderCredentialStore: ProviderCredentialStoring {
     private func removeCachedCredential(for account: String) {
         cacheLock.lock()
         cachedCredentials[account] = nil
+        cachedPresence[account] = false
         blockedReads.remove(account)
         cacheLock.unlock()
     }

@@ -122,7 +122,11 @@ struct CodexBarApp: App {
             launchAtLoginManager: LaunchAtLoginManagerFactory.make()
         )
         _appState = StateObject(wrappedValue: state)
-        state.start()
+        // The test bundle is hosted inside this app target. Starting the real
+        // polling loop there would read the user's Keychain during XCTest.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            state.start()
+        }
     }
 
     var body: some Scene {
@@ -163,14 +167,18 @@ private struct MenuBarContent: View {
             VStack(alignment: .leading, spacing: 0) {
             // Summary line + reset expiry
             let summarySnapshot = appState.currentUsage ?? appState.lastSuccessfulUsage ?? appState.officialUsageSnapshot
-            MenuBarPanelInfoText(
-                text: summarySnapshot.map { "ChatGPT: \(MenuBarPresentation.summary($0))" }
-                    ?? "ChatGPT: Week -- · -- · --"
-            )
-
             if let snapshot = summarySnapshot {
+                MenuBarPanelInfoText(
+                    text: MenuBarPresentation.chatGPTDropdownLine(
+                        snapshot,
+                        formattedExpiry: MenuBarStamp.shortExpiryString
+                    )
+                )
+                MenuBarPanelInfoText(text: MenuBarPresentation.summary(snapshot))
                 showResetExpiry(snapshot)
             } else {
+                MenuBarPanelInfoText(text: MenuBarPresentation.chatGPTDropdownLine(nil))
+                MenuBarPanelInfoText(text: MenuBarPresentation.summary(nil))
                 MenuBarPanelInfoText(text: "No reset expiry")
             }
 
@@ -597,6 +605,11 @@ enum MenuBarStamp {
         return expiry.string(from: date)
     }
 
+    static func shortExpiryString(_ value: String) -> String {
+        guard let date = date(from: value) else { return value }
+        return shortExpiry.string(from: date)
+    }
+
     private static func date(from value: String) -> Date? {
         fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
@@ -619,6 +632,14 @@ enum MenuBarStamp {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+
+    private static let shortExpiry: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "MM-dd HH:mm"
         return formatter
     }()
 }

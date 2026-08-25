@@ -730,6 +730,7 @@ final class DeepSeekCredentialSource {
     private let keychainAccount: String
     private let legacyCredentialLock = NSLock()
     private var cachedLegacyCredential: String?
+    private var cachedLegacyPresence: Bool?
     private var didAttemptLegacyCredentialRead = false
 
     init(
@@ -766,6 +767,17 @@ final class DeepSeekCredentialSource {
     }
 
     private var hasKeychainCredential: Bool {
+        legacyCredentialLock.lock()
+        if cachedLegacyCredential != nil {
+            legacyCredentialLock.unlock()
+            return true
+        }
+        if let cachedLegacyPresence {
+            legacyCredentialLock.unlock()
+            return cachedLegacyPresence
+        }
+        legacyCredentialLock.unlock()
+
         var result: CFTypeRef?
         let authenticationContext = LAContext()
         authenticationContext.interactionNotAllowed = true
@@ -777,7 +789,13 @@ final class DeepSeekCredentialSource {
             kSecReturnAttributes as String: true,
             kSecUseAuthenticationContext as String: authenticationContext
         ]
-        return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess || status == errSecItemNotFound {
+            legacyCredentialLock.lock()
+            cachedLegacyPresence = status == errSecSuccess
+            legacyCredentialLock.unlock()
+        }
+        return status == errSecSuccess
     }
 
     private func readKeychainCredential() -> String? {
@@ -814,6 +832,7 @@ final class DeepSeekCredentialSource {
     private func cacheLegacyCredential(_ credential: String) {
         legacyCredentialLock.lock()
         cachedLegacyCredential = credential
+        cachedLegacyPresence = true
         legacyCredentialLock.unlock()
     }
 }

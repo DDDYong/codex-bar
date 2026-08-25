@@ -46,10 +46,11 @@ enum MenuBarPresentation {
         if isThirdParty, let balance {
             return thirdPartyTitle(for: mode, balance: balance)
         }
-        let detailed = summary(snapshot)
         switch mode {
-        case .detailed: return detailed
-        case .compact: return detailed.components(separatedBy: " · ").first ?? "Week --"
+        case .detailed:
+            return [fiveHourTitle(snapshot), summary(snapshot)].joined(separator: " · ")
+        case .compact:
+            return [fiveHourRemainingTitle(snapshot), weeklyRemainingTitle(snapshot)].joined(separator: " · ")
         case .iconOnly: return ""
         }
     }
@@ -308,6 +309,40 @@ enum MenuBarPresentation {
         let reset = snapshot.weeklyWindow?.resetsAt.map(resetLabel) ?? "--"
         let credits = resetCreditLabel(snapshot.resetCredits.availableCount)
         return "Week \(percent) · \(reset) · \(credits)"
+    }
+
+    static func fiveHourTitle(_ snapshot: CodexUsageSnapshot?) -> String {
+        guard let snapshot else { return "5h -- · --" }
+        let percent = snapshot.shortWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
+        let reset = snapshot.shortWindow?.resetsAt.map(resetLabel) ?? "--"
+        return "5h \(percent) · \(reset)"
+    }
+
+    static func fiveHourRemainingTitle(_ snapshot: CodexUsageSnapshot?) -> String {
+        let percent = snapshot?.shortWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
+        return "5h \(percent)"
+    }
+
+    static func weeklyRemainingTitle(_ snapshot: CodexUsageSnapshot?) -> String {
+        let percent = snapshot?.weeklyWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
+        return "W \(percent)"
+    }
+
+    static func fiveHourDropdownLine(
+        _ snapshot: CodexUsageSnapshot?,
+        formattedExpiry: (String) -> String = { $0 }
+    ) -> String {
+        guard let snapshot else { return "5h -- · --" }
+        let percent = snapshot.shortWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
+        let expiry = snapshot.shortWindow?.resetsAt.map(formattedExpiry) ?? "--"
+        return "5h \(percent) · \(expiry)"
+    }
+
+    static func chatGPTDropdownLine(
+        _ snapshot: CodexUsageSnapshot?,
+        formattedExpiry: (String) -> String = { $0 }
+    ) -> String {
+        "ChatGPT: \(fiveHourDropdownLine(snapshot, formattedExpiry: formattedExpiry))"
     }
 
     static func resetExpiryLine(index: Int, formattedExpiry: String) -> String {

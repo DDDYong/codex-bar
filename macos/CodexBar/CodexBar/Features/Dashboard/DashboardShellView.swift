@@ -1633,10 +1633,12 @@ private struct DashboardHomeView: View {
                             HStack(alignment: .top, spacing: Layout.spacing) {
                                 if let official = officialSnapshot, official.weeklyWindow != nil {
                                     QuotaMetricCard(
-                                        title: "Week 额度",
+                                        title: "ChatGPT 额度",
                                         percentage: official.weeklyWindow?.remainingPercent,
                                         accent: .blue,
-                                        detail: resetDescription(official.weeklyWindow?.resetsAt)
+                                        detail: resetDescription(official.weeklyWindow?.resetsAt),
+                                        shortPercentage: official.shortWindow?.remainingPercent,
+                                        shortDetail: refreshDescription(official.shortWindow?.resetsAt)
                                     )
                                     .frame(width: topCardWidth)
                                 }
@@ -1716,6 +1718,11 @@ private struct DashboardHomeView: View {
         guard let value else { return "暂未提供重置时间" }
         return UIStamp.expiryString(value)
     }
+
+    private func refreshDescription(_ value: String?) -> String {
+        guard let value else { return "暂未提供刷新时间" }
+        return UIStamp.expiryString(value)
+    }
 }
 
 private struct QuotaMetricCard: View {
@@ -1723,32 +1730,59 @@ private struct QuotaMetricCard: View {
     let percentage: Double?
     let accent: Color
     let detail: String
+    let shortPercentage: Double?
+    let shortDetail: String
 
     var body: some View {
         DashboardTopCard(title: title) {
-            HStack(spacing: 11) {
+            HStack(spacing: 20) {
                 ZStack {
                     Circle().stroke(accent.opacity(0.15), lineWidth: 9)
                     Circle().trim(from: 0, to: CGFloat((percentage ?? 0) / 100)).stroke(accent, style: StrokeStyle(lineWidth: 9, lineCap: .round)).rotationEffect(.degrees(-90))
-                    VStack(spacing: 1) { Text(percentage.map { String(format: "%.0f%%", $0) } ?? "--").font(.title3.weight(.bold)); Text("剩余").font(.caption2).foregroundStyle(.secondary) }
-                }
-                .frame(width: DashboardHomeLayout.metricCircleDiameter, height: DashboardHomeLayout.metricCircleDiameter)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("实时额度").font(.caption).foregroundStyle(.secondary)
-                    HStack(spacing: 4) {
-                        Text("下次重置: ")
-                            .font(.caption)
+                    VStack(spacing: 1) {
+                        Text(percentage.map { String(format: "%.0f%%", $0) } ?? "--")
+                            .font(.title3.weight(.bold))
+                        Text("Week")
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .fixedSize()
-                        Text(detail)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .layoutPriority(1)
                     }
                 }
+                .frame(width: DashboardHomeLayout.metricCircleDiameter, height: DashboardHomeLayout.metricCircleDiameter)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("5h")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                        ProgressView(value: shortPercentage ?? 0, total: 100)
+                            .progressViewStyle(.linear)
+                            .tint(accent)
+                            .frame(maxWidth: .infinity)
+                        Text(shortPercentage.map { String(format: "%.0f%%", $0) } ?? "--")
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                    resetTimeRow(label: "5h：", value: shortDetail)
+                    resetTimeRow(label: "week：", value: detail)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    private func resetTimeRow(label: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            Text(value)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .layoutPriority(1)
         }
     }
 }
@@ -2326,14 +2360,22 @@ private struct UsageChatGPTSubscriptionCard: View {
 
                 VStack(spacing: 0) {
                     metricRow(
-                        icon: "arrow.counterclockwise",
-                        title: "可用 Reset",
-                        value: snapshot?.resetCredits.availableCount.map { "\($0) 次" } ?? "未知"
+                        icon: "gauge",
+                        title: "5h",
+                        value: snapshot?.shortWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--",
+                        progress: snapshot?.shortWindow?.remainingPercent
                     )
-                    Divider().overlay(PrototypePalette.line)
+                    Rectangle().fill(PrototypePalette.line).frame(height: 1)
                     metricRow(
                         icon: "clock",
-                        title: "下次重置",
+                        title: "5h 刷新",
+                        value: snapshot?.shortWindow?.resetsAt.map(UIStamp.expiryString)
+                            ?? (isRefreshing ? "查询中…" : (error ?? "暂未提供"))
+                    )
+                    Rectangle().fill(PrototypePalette.line).frame(height: 1)
+                    metricRow(
+                        icon: "calendar",
+                        title: "Week 重置",
                         value: snapshot?.weeklyWindow?.resetsAt.map(UIStamp.expiryString)
                             ?? (isRefreshing ? "查询中…" : (error ?? "暂未提供"))
                     )
@@ -2343,17 +2385,38 @@ private struct UsageChatGPTSubscriptionCard: View {
         .usagePanel(height: 178)
     }
 
-    private func metricRow(icon: String, title: String, value: String) -> some View {
+    private func metricRow(
+        icon: String,
+        title: String,
+        value: String,
+        progress: Double? = nil
+    ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon).foregroundStyle(.secondary).frame(width: 16)
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            if let progress {
+                ProgressView(value: progress, total: 100)
+                    .progressViewStyle(.linear)
+                    .tint(.blue)
+                    .frame(minWidth: 72, idealWidth: 100, maxWidth: .infinity)
+                    .layoutPriority(1)
+                Text(value)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(minWidth: 34, alignment: .trailing)
+            } else {
+                Spacer()
+                Text(value)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 44)
+        .frame(maxWidth: .infinity, minHeight: 24)
     }
 }
 

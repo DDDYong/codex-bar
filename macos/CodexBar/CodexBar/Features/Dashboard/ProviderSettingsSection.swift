@@ -129,7 +129,9 @@ private struct ProviderConfigurationCard: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled((!providerID.credentialKinds.isEmpty && !appState.isProviderConfigured(providerID)) || isTesting)
+                // Testing is an explicit action; avoid probing the Keychain just to decide
+                // whether this button should be disabled.
+                .disabled(isTesting)
 
                 if isTesting {
                     ProgressView()
@@ -196,19 +198,21 @@ private struct ProviderConfigurationCard: View {
                 Text(kind.title)
                     .font(.caption.weight(.semibold))
                 Spacer()
-                if appState.hasStoredCredential(providerID: providerID, kind: kind) {
-                    Label("钥匙串已配置", systemImage: "checkmark.shield.fill")
-                        .foregroundStyle(.green)
+                if shouldReadCredentialStatus {
+                    if appState.hasStoredCredential(providerID: providerID, kind: kind) {
+                        Label("钥匙串已配置", systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                            .font(.caption2)
+                        Button("删除", role: .destructive) {
+                            credentialPendingDeletion = kind
+                        }
+                        .buttonStyle(.borderless)
                         .font(.caption2)
-                    Button("删除", role: .destructive) {
-                        credentialPendingDeletion = kind
+                    } else if appState.hasCredential(providerID: providerID, kind: kind) {
+                        Label("检测到外部配置", systemImage: "link")
+                            .foregroundStyle(.secondary)
+                            .font(.caption2)
                     }
-                    .buttonStyle(.borderless)
-                    .font(.caption2)
-                } else if appState.hasCredential(providerID: providerID, kind: kind) {
-                    Label("检测到外部配置", systemImage: "link")
-                        .foregroundStyle(.secondary)
-                        .font(.caption2)
                 }
             }
 
@@ -257,10 +261,36 @@ private struct ProviderConfigurationCard: View {
 
     @ViewBuilder
     private var credentialSummary: some View {
-        let configured = providerID.credentialKinds.filter { appState.hasCredential(providerID: providerID, kind: $0) }
-        Text(configured.isEmpty ? "未配置凭据" : "已配置 \(configured.count)/\(providerID.credentialKinds.count)")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+        if !appState.enabledProviderIDs.contains(providerID) {
+            Text("未启用，不读取凭据")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else if !shouldReadCredentialStatus {
+            Text("等待首次指标查询")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else {
+            let configured = providerID.credentialKinds.filter {
+                appState.hasCredential(providerID: providerID, kind: $0)
+            }
+            Text(configured.isEmpty ? "未配置凭据" : "已配置 \(configured.count)/\(providerID.credentialKinds.count)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var shouldReadCredentialStatus: Bool {
+        guard appState.enabledProviderIDs.contains(providerID),
+              !appState.refreshingProviderIDs.contains(providerID) else { return false }
+        return appState.providerSnapshots[providerID] != nil
+            || isSuccessfulConnection
+    }
+
+    private var isSuccessfulConnection: Bool {
+        if case .succeeded = appState.providerConnectionStates[providerID] {
+            return true
+        }
+        return false
     }
 
     private var connectionMessage: (text: String, isError: Bool)? {
