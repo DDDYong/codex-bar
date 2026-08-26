@@ -174,11 +174,11 @@ private struct MenuBarContent: View {
                         formattedExpiry: MenuBarStamp.shortExpiryString
                     )
                 )
-                MenuBarPanelInfoText(text: MenuBarPresentation.summary(snapshot))
+                MenuBarPanelInfoText(text: MenuBarPresentation.dropdownSummary(snapshot))
                 showResetExpiry(snapshot)
             } else {
                 MenuBarPanelInfoText(text: MenuBarPresentation.chatGPTDropdownLine(nil))
-                MenuBarPanelInfoText(text: MenuBarPresentation.summary(nil))
+                MenuBarPanelInfoText(text: MenuBarPresentation.dropdownSummary(nil))
                 MenuBarPanelInfoText(text: "No reset expiry")
             }
 

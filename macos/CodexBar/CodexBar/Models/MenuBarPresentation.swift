@@ -311,6 +311,14 @@ enum MenuBarPresentation {
         return "Week \(percent) · \(reset) · \(credits)"
     }
 
+    static func dropdownSummary(_ snapshot: CodexUsageSnapshot?) -> String {
+        guard let snapshot else { return "Week -- · -- · --" }
+        let percent = snapshot.weeklyWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
+        let reset = snapshot.weeklyWindow?.resetsAt.map(fullResetLabel) ?? "--"
+        let credits = resetCreditLabel(snapshot.resetCredits.availableCount)
+        return "Week \(percent) · \(reset) · \(credits)"
+    }
+
     static func fiveHourTitle(_ snapshot: CodexUsageSnapshot?) -> String {
         guard let snapshot else { return "5h -- · --" }
         let percent = snapshot.shortWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
@@ -383,6 +391,18 @@ enum MenuBarPresentation {
         return weekdayLabel(for: date)
     }
 
+    private static func fullResetLabel(_ value: String) -> String {
+        let parser = ISO8601DateFormatter()
+        guard let date = fractional.date(from: value) ?? parser.date(from: value) else { return "--" }
+        let secondsUntil = date.timeIntervalSinceNow
+        if secondsUntil > 0, secondsUntil < 86_400 {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            return formatter.string(from: date)
+        }
+        return fullWeekdayLabel(for: date)
+    }
+
     private static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -391,6 +411,11 @@ enum MenuBarPresentation {
 
     private static func weekdayLabel(for date: Date) -> String {
         let symbols = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        return symbols[Calendar.current.component(.weekday, from: date) - 1]
+    }
+
+    private static func fullWeekdayLabel(for date: Date) -> String {
+        let symbols = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
         return symbols[Calendar.current.component(.weekday, from: date) - 1]
     }
 

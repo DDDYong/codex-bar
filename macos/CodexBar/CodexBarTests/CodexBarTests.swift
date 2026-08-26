@@ -407,16 +407,21 @@ final class CodexBarTests: XCTestCase {
                 resetsAt: "2099-01-04T12:00:00Z",
                 windowSeconds: 18_000
             ),
-            weeklyWindow: CodexUsageWindow(remainingPercent: 100, resetsAt: nil, windowSeconds: 604_800),
+            weeklyWindow: CodexUsageWindow(
+                remainingPercent: 100,
+                resetsAt: "2099-01-04T12:00:00Z",
+                windowSeconds: 604_800
+            ),
             resetCredits: CodexResetCredits(availableCount: 1, expiresAt: []),
             updatedAt: Date(timeIntervalSince1970: 0)
         )
 
         XCTAssertEqual(
             MenuBarPresentation.title(for: .detailed, snapshot: snapshot),
-            "5h 82% · Sun · Week 100% · -- · 1 Reset"
+            "5h 82% · Sun · Week 100% · Sun · 1 Reset"
         )
         XCTAssertEqual(MenuBarPresentation.title(for: .compact, snapshot: snapshot), "5h 82% · W 100%")
+        XCTAssertEqual(MenuBarPresentation.dropdownSummary(snapshot), "Week 100% · Sunday · 1 Reset")
         XCTAssertEqual(
             MenuBarPresentation.fiveHourDropdownLine(
                 snapshot,

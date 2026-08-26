@@ -98,7 +98,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
 
 脚本会停止旧进程、构建 Debug 版本、安装到 `/Applications/CodexBar.app` 并启动。它也会清理遗留的 `/Applications/Codex Bar.app`，确保系统只保留一个应用副本。
 
-当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.6` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
+当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.7` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
 
 可用参数：
 
