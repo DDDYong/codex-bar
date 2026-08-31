@@ -204,6 +204,14 @@ final class DeepSeekMetricsSource: ProviderMetricsSource, ProviderCredentialVali
         var sourceVersion: String?
         var updatedAt = balance.updatedAt
 
+        if balance.totalBalance <= 0 {
+            issues.append(
+                balance.totalBalance < 0
+                    ? "账户余额为负，API 暂不可调用"
+                    : "账户余额不足，API 暂不可调用"
+            )
+        }
+
         if platformUsageEnabled(), let platformUsageSource {
             do {
                 let usage = try await platformUsageSource.fetchUsage(now: Date())

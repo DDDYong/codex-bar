@@ -1050,6 +1050,9 @@ final class ProxyUsageSource: ProxyUsageReading {
 
 enum DeepSeekBalanceError: LocalizedError, Equatable {
     case apiKeyMissing
+    case insufficientBalance
+    case rateLimited
+    case serverError(Int)
     case requestFailed(String)
     case invalidResponse
     case unavailable
@@ -1057,6 +1060,9 @@ enum DeepSeekBalanceError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .apiKeyMissing: "DeepSeek API Key 未配置或无法从钥匙串读取。"
+        case .insufficientBalance: "DeepSeek API 账户余额不足，暂不可调用 API。"
+        case .rateLimited: "DeepSeek 请求过于频繁（HTTP 429），请稍后重试。"
+        case .serverError(let statusCode): "DeepSeek 服务异常（HTTP \(statusCode)），请稍后重试。"
         case .requestFailed(let msg): "DeepSeek 余额查询失败：\(msg)"
         case .invalidResponse: "DeepSeek 余额数据格式异常。"
         case .unavailable: "DeepSeek 服务暂不可用，请稍后重试。"
@@ -1144,6 +1150,15 @@ final class DeepSeekBalanceSource {
             if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                 throw DeepSeekBalanceError.apiKeyMissing
             }
+            if httpResponse.statusCode == 402 {
+                throw DeepSeekBalanceError.insufficientBalance
+            }
+            if httpResponse.statusCode == 429 {
+                throw DeepSeekBalanceError.rateLimited
+            }
+            if (500...599).contains(httpResponse.statusCode) {
+                throw DeepSeekBalanceError.serverError(httpResponse.statusCode)
+            }
             throw DeepSeekBalanceError.unavailable
         }
 
@@ -1158,8 +1173,10 @@ final class DeepSeekBalanceSource {
             throw DeepSeekBalanceError.invalidResponse
         }
 
-        guard balanceResponse.isAvailable,
-              let primary = balanceResponse.balanceInfos.first else {
+        // `is_available` describes whether the account can make API calls; it
+        // may be false while the response still contains the authoritative
+        // negative/zero balance that should be displayed.
+        guard let primary = balanceResponse.balanceInfos.first else {
             throw DeepSeekBalanceError.unavailable
         }
         guard let totalBalance = Double(primary.totalBalance),

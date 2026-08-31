@@ -738,6 +738,54 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(balance.updatedAt, updatedAt)
     }
 
+    func testDeepSeekBalanceParserKeepsNegativeBalanceWhenAPIUseIsUnavailable() throws {
+        let data = Data(#"""
+        {
+            "is_available": false,
+            "balance_infos": [{
+                "currency": "CNY",
+                "total_balance": "-0.47",
+                "topped_up_balance": "-0.47",
+                "granted_balance": "0.00"
+            }]
+        }
+        """#.utf8)
+
+        let balance = try DeepSeekBalanceSource.parseBalance(from: data)
+
+        XCTAssertEqual(balance.totalBalance, -0.47)
+        XCTAssertEqual(balance.toppedUpBalance, -0.47)
+        XCTAssertEqual(balance.grantedBalance, 0)
+    }
+
+    func testDeepSeekMetricsSnapshotPreservesNegativeBalanceAndReportsTheRestriction() async throws {
+        let balanceData = Data(#"""
+        {
+            "is_available": false,
+            "balance_infos": [{
+                "currency": "CNY",
+                "total_balance": "-0.47",
+                "topped_up_balance": "-0.47",
+                "granted_balance": "0.00"
+            }]
+        }
+        """#.utf8)
+        let balanceSource = DeepSeekBalanceSource(
+            apiKey: { "test-api-key" },
+            session: .stubbed { _ in (200, balanceData) }
+        )
+        let source = DeepSeekMetricsSource(
+            balanceSource: balanceSource,
+            platformUsageEnabled: { false },
+            configured: { true }
+        )
+
+        let snapshot = try await source.fetchSnapshot()
+
+        XCTAssertEqual(snapshot.balance?.available, -0.47)
+        XCTAssertTrue(snapshot.issues.contains("账户余额为负，API 暂不可调用"))
+    }
+
     func testDeepSeekBalanceParserRejectsMalformedMoneyValues() throws {
         let data = try JSONSerialization.data(withJSONObject: [
             "is_available": true,
@@ -803,7 +851,34 @@ final class CodexBarTests: XCTestCase {
             _ = try await failingSource.fetchBalance()
             XCTFail("期望服务端错误被安全映射")
         } catch {
-            XCTAssertEqual(error as? DeepSeekBalanceError, .unavailable)
+            XCTAssertEqual(error as? DeepSeekBalanceError, .serverError(500))
+            XCTAssertFalse(error.localizedDescription.contains(body))
+        }
+    }
+
+    func testDeepSeekBalanceClassifiesInsufficientBalanceAndRateLimitWithoutLeakingBody() async {
+        let body = "server-secret-body"
+        let insufficient = DeepSeekBalanceSource(
+            apiKey: { "test-key" },
+            session: .stubbed { _ in (402, Data(body.utf8)) }
+        )
+        do {
+            _ = try await insufficient.fetchBalance()
+            XCTFail("期望余额不足被单独分类")
+        } catch {
+            XCTAssertEqual(error as? DeepSeekBalanceError, .insufficientBalance)
+            XCTAssertFalse(error.localizedDescription.contains(body))
+        }
+
+        let rateLimited = DeepSeekBalanceSource(
+            apiKey: { "test-key" },
+            session: .stubbed { _ in (429, Data(body.utf8)) }
+        )
+        do {
+            _ = try await rateLimited.fetchBalance()
+            XCTFail("期望限流被单独分类")
+        } catch {
+            XCTAssertEqual(error as? DeepSeekBalanceError, .rateLimited)
             XCTAssertFalse(error.localizedDescription.contains(body))
         }
     }
