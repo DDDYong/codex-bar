@@ -152,6 +152,9 @@ enum MenuBarPresentation {
 
     static func thirdPartyTitle(for mode: MenuBarDisplayMode, snapshot: ProviderFinancialSnapshot) -> String {
         guard mode != .iconOnly else { return "" }
+        if snapshot.providerID == .glm {
+            return GLMModelPresentation.menuTitle(for: snapshot.source)
+        }
         let primary = snapshot.balance.map { $0.formatted($0.available) }
             ?? snapshot.budget.map { formattedMoney($0.remaining, currency: $0.currency) }
             ?? snapshot.quotaWindows.first.map { String(format: "%.0f%%", $0.remainingPercent) }
@@ -217,6 +220,10 @@ enum MenuBarPresentation {
                 "DeepSeek: Today \(todayCost) · Tokens \(todayTokens)",
                 balanceLine
             ]
+        }
+
+        if snapshot.providerID == .glm {
+            return [GLMModelPresentation.menuTitle(for: snapshot.source)]
         }
 
         var lines: [String] = []

@@ -1959,6 +1959,9 @@ private struct ProviderMetricsCard: View {
     }
 
     private var primaryMetric: String {
+        if snapshot.providerID == .glm {
+            return GLMModelPresentation.connectionStatus(for: snapshot.source)
+        }
         if let balance = snapshot.balance {
             return balance.formatted(balance.available)
         }
@@ -1975,6 +1978,10 @@ private struct ProviderMetricsCard: View {
     }
 
     private var detailLines: [String] {
+        if snapshot.providerID == .glm {
+            return GLMModelPresentation.metricLines(for: snapshot.source)
+        }
+
         var lines: [String] = []
         if let issue = snapshot.issues.first {
             lines.append("部分降级：\(issue)")
@@ -2243,19 +2250,16 @@ private struct UsagePrototypePage: View {
     @EnvironmentObject private var appState: AppState
     let snapshot: CodexUsageSnapshot?
 
-    private var deepSeekSnapshot: ProviderFinancialSnapshot? {
-        appState.providerSnapshots[.deepseek]
-    }
-
     private var enabledProviderIDs: Set<ProviderID> {
         appState.effectiveEnabledProviderIDs
     }
 
-    private var resetPlacement: UsagePageLayout.ResetPlacement {
-        UsagePageLayout.resetPlacement(
-            enabledProviderIDs: enabledProviderIDs,
-            hasDeepSeekSnapshot: deepSeekSnapshot != nil
-        )
+    private var trendProviderIDs: [ProviderID] {
+        [.deepseek, .glm].filter { providerID in
+            enabledProviderIDs.contains(providerID)
+                || appState.providerSnapshots[providerID] != nil
+                || !(appState.proxyDailyUsageHistory[providerID] ?? []).isEmpty
+        }
     }
 
     var body: some View {
@@ -2270,21 +2274,43 @@ private struct UsagePrototypePage: View {
                         .disabled(snapshot == nil)
                 }
 
-                switch resetPlacement {
-                case .besideChatGPT:
-                    LazyVGrid(columns: usageColumns, spacing: 14) {
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        usageColumnHeader("订阅与 API 指标", systemImage: "chart.bar.xaxis")
                         chatGPTCard
-                        resetExpiryCard
+                        ForEach(ProviderID.allCases.filter { enabledProviderIDs.contains($0) }) { providerID in
+                            UsageProviderCard(
+                                providerID: providerID,
+                                snapshot: appState.providerSnapshots[providerID],
+                                proxyUsage: appState.proxyUsageByProvider[providerID],
+                                error: appState.providerErrors[providerID],
+                                isRefreshing: appState.refreshingProviderIDs.contains(providerID)
+                            )
+                        }
                     }
-                case .besideAPITrend:
-                    providerSummaryGrid
-                    LazyVGrid(columns: usageColumns, spacing: 14) {
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        usageColumnHeader("Reset 与消费趋势", systemImage: "arrow.counterclockwise")
                         resetExpiryCard
-                        UsageAPITrendCard(snapshot: deepSeekSnapshot)
+                        ForEach(trendProviderIDs) { providerID in
+                            UsageAPITrendCard(
+                                providerID: providerID,
+                                snapshot: appState.providerSnapshots[providerID],
+                                proxyUsage: appState.proxyUsageByProvider[providerID],
+                                proxyDailyUsage: appState.proxyDailyUsageHistory[providerID] ?? []
+                            )
+                        }
+                        if trendProviderIDs.isEmpty {
+                            UsageAPITrendCard(
+                                providerID: .deepseek,
+                                snapshot: nil,
+                                proxyUsage: nil,
+                                proxyDailyUsage: []
+                            )
+                        }
                     }
-                case .fullWidth:
-                    providerSummaryGrid
-                    resetExpiryCard
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
 
                 UsageUnifiedHistoryCard(records: Array(appState.snapshots.suffix(8).reversed()))
@@ -2308,25 +2334,11 @@ private struct UsagePrototypePage: View {
         )
     }
 
-    private var providerSummaryGrid: some View {
-        LazyVGrid(columns: usageColumns, spacing: 14) {
-            chatGPTCard
-            ForEach(ProviderID.allCases.filter { enabledProviderIDs.contains($0) }) { providerID in
-                UsageProviderCard(
-                    providerID: providerID,
-                    snapshot: appState.providerSnapshots[providerID],
-                    error: appState.providerErrors[providerID],
-                    isRefreshing: appState.refreshingProviderIDs.contains(providerID)
-                )
-            }
-        }
-    }
-
-    private var usageColumns: [GridItem] {
-        [
-            GridItem(.flexible(minimum: 280), spacing: 14),
-            GridItem(.flexible(minimum: 280), spacing: 14)
-        ]
+    private func usageColumnHeader(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func exportSnapshots() { guard let data = appState.exportedSnapshots() else { return }; let panel = NSSavePanel(); panel.nameFieldStringValue = "codex-bar-usage-snapshots.json"; panel.allowedContentTypes = [.json]; guard panel.runModal() == .OK, let url = panel.url else { return }; try? data.write(to: url, options: .atomic) }
@@ -2423,6 +2435,7 @@ private struct UsageChatGPTSubscriptionCard: View {
 private struct UsageProviderCard: View {
     let providerID: ProviderID
     let snapshot: ProviderFinancialSnapshot?
+    let proxyUsage: ProxyDailyUsage?
     let error: String?
     let isRefreshing: Bool
 
@@ -2440,26 +2453,30 @@ private struct UsageProviderCard: View {
             }
 
             if let snapshot {
-                HStack(spacing: 22) {
-                    ProviderIconHelper.iconView(
-                        for: providerID.providerType,
-                        size: DashboardHomeLayout.usageProviderArtworkDiameter
-                    )
-                    .frame(
-                        width: DashboardHomeLayout.usageMetricCircleDiameter,
-                        height: DashboardHomeLayout.usageMetricCircleDiameter
-                    )
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("可用余额").font(.caption).foregroundStyle(.secondary)
-                        Text(availableBalance(snapshot)).font(.title.weight(.bold)).foregroundStyle(.blue)
-                        Text("今日消费 \(todaySpend(snapshot)) · 今日用量 \(todayTokens(snapshot))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Text(providerSummary(snapshot))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                if providerID == .glm {
+                    glmMetricsContent(snapshot)
+                } else {
+                    HStack(spacing: 22) {
+                        ProviderIconHelper.iconView(
+                            for: providerID.providerType,
+                            size: DashboardHomeLayout.usageProviderArtworkDiameter
+                        )
+                        .frame(
+                            width: DashboardHomeLayout.usageMetricCircleDiameter,
+                            height: DashboardHomeLayout.usageMetricCircleDiameter
+                        )
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("可用余额").font(.caption).foregroundStyle(.secondary)
+                            Text(availableBalance(snapshot)).font(.title.weight(.bold)).foregroundStyle(.blue)
+                            Text("今日消费 \(todaySpend(snapshot)) · 今日用量 \(todayTokens(snapshot))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                            Text(providerSummary(snapshot))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {
@@ -2472,19 +2489,49 @@ private struct UsageProviderCard: View {
         .usagePanel(height: 178)
     }
 
+    private func glmMetricsContent(_ snapshot: ProviderFinancialSnapshot) -> some View {
+        HStack(spacing: 22) {
+            ProviderIconHelper.iconView(
+                for: providerID.providerType,
+                size: DashboardHomeLayout.usageProviderArtworkDiameter
+            )
+            .frame(
+                width: DashboardHomeLayout.usageMetricCircleDiameter,
+                height: DashboardHomeLayout.usageMetricCircleDiameter
+            )
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(GLMModelPresentation.metricLines(for: snapshot.source).enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(line.hasPrefix("模型能力") ? 2 : 1)
+                        .minimumScaleFactor(0.75)
+                        .layoutPriority(line.hasPrefix("模型能力") ? 1 : 0)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private func availableBalance(_ snapshot: ProviderFinancialSnapshot) -> String {
         guard let balance = snapshot.balance else { return "--" }
         return balance.formatted(balance.available)
     }
 
     private func todaySpend(_ snapshot: ProviderFinancialSnapshot) -> String {
-        guard let spend = snapshot.spending.first(where: { $0.period == .today }) else { return "--" }
-        return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+        if let spend = snapshot.spending.first(where: { $0.period == .today }) {
+            return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+        }
+        guard let proxyUsage else { return "--" }
+        return MoneySnapshot(available: proxyUsage.totalCostUSD, currency: "USD").formatted(proxyUsage.totalCostUSD)
     }
 
     private func todayTokens(_ snapshot: ProviderFinancialSnapshot) -> String {
-        guard let tokens = snapshot.tokens else { return "--" }
-        return TokenFormatter.compact(tokens.input + tokens.output)
+        if let tokens = snapshot.tokens {
+            return TokenFormatter.compact(tokens.input + tokens.output)
+        }
+        guard let proxyUsage else { return "--" }
+        return TokenFormatter.compact(proxyUsage.inputTokens + proxyUsage.outputTokens)
     }
 
     private func providerSummary(_ snapshot: ProviderFinancialSnapshot) -> String {
@@ -2559,18 +2606,30 @@ private struct UsageResetExpiryCard: View {
 }
 
 private struct UsageAPITrendCard: View {
+    let providerID: ProviderID
     let snapshot: ProviderFinancialSnapshot?
+    let proxyUsage: ProxyDailyUsage?
+    let proxyDailyUsage: [ProviderDailyUsageSnapshot]
 
     private var dailyRows: [ProviderDailyUsageSnapshot] {
-        Array((snapshot?.dailyUsage ?? []).filter { $0.cost != nil }.suffix(7))
+        let providerRows = (snapshot?.dailyUsage ?? []).filter { $0.cost != nil }
+        if !providerRows.isEmpty {
+            return Array(providerRows.suffix(7))
+        }
+        return Array(proxyDailyUsage.filter { $0.cost != nil }.suffix(7))
+    }
+
+    private var isProxyTrend: Bool {
+        !(snapshot?.dailyUsage ?? []).contains(where: { $0.cost != nil })
+            && !proxyDailyUsage.isEmpty
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("API 消费趋势").font(.headline)
+                Text("\(providerID.displayName) API 消费趋势").font(.headline)
                 Spacer()
-                Text("近 7 日").font(.caption).foregroundStyle(.secondary)
+                Text(sourceLabel).font(.caption).foregroundStyle(.secondary)
             }
 
             HStack(spacing: 0) {
@@ -2582,7 +2641,7 @@ private struct UsageAPITrendCard: View {
             }
 
             if dailyRows.isEmpty {
-                Text("当前数据源尚未返回按日消费，不绘制模拟趋势。")
+                Text(emptyMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -2599,7 +2658,9 @@ private struct UsageAPITrendCard: View {
                     AxisMarks(position: .leading) { value in
                         AxisGridLine().foregroundStyle(PrototypePalette.line)
                         AxisValueLabel {
-                            if let amount = value.as(Double.self) { Text("¥\(amount, specifier: "%.0f")") }
+                            if let amount = value.as(Double.self) {
+                                Text("\(currencySymbol)\(amount, specifier: "%.0f")")
+                            }
                         }
                     }
                 }
@@ -2610,18 +2671,43 @@ private struct UsageAPITrendCard: View {
     }
 
     private var todaySpend: String {
-        guard let spend = snapshot?.spending.first(where: { $0.period == .today }) else { return "--" }
-        return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+        if let spend = snapshot?.spending.first(where: { $0.period == .today }) {
+            return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+        }
+        guard let proxyUsage else { return "--" }
+        return MoneySnapshot(available: proxyUsage.totalCostUSD, currency: "USD").formatted(proxyUsage.totalCostUSD)
     }
 
     private var todayTokens: String {
-        guard let tokens = snapshot?.tokens else { return "--" }
-        return TokenFormatter.compact(tokens.input + tokens.output)
+        if let tokens = snapshot?.tokens {
+            return TokenFormatter.compact(tokens.input + tokens.output)
+        }
+        return proxyUsage.map { TokenFormatter.compact($0.totalTokens) } ?? "--"
     }
 
     private var lifetimeSpend: String {
         guard let spend = snapshot?.spending.first(where: { $0.period == .lifetime }) else { return "--" }
         return MoneySnapshot(available: spend.amount, currency: spend.currency).formatted(spend.amount)
+    }
+
+    private var currencySymbol: String {
+        let currency = dailyRows.first?.currency
+            ?? snapshot?.spending.first?.currency
+            ?? "USD"
+        return MoneySnapshot(available: 0, currency: currency).currencySymbol
+    }
+
+    private var sourceLabel: String {
+        if isProxyTrend { return "本地代理 · 近 7 日" }
+        if snapshot?.source == .providerDashboard { return "官方平台 · 近 7 日" }
+        return "近 7 日"
+    }
+
+    private var emptyMessage: String {
+        if providerID == .glm {
+            return "官方 API 不提供账户账单；仅显示经过 cc-switch 的本地请求。"
+        }
+        return "当前数据源尚未返回按日消费，不绘制模拟趋势。"
     }
 
     private func trendMetric(_ title: String, value: String) -> some View {

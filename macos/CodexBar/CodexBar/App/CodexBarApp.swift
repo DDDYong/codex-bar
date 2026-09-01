@@ -105,8 +105,7 @@ struct CodexBarApp: App {
                 platformUsageEnabled: { settingsStore.load().deepSeekPlatformUsageEnabled },
                 configured: { credentialSource.isConfigured }
             ),
-            OpenRouterMetricsSource(credentialStore: credentialStore),
-            SiliconFlowMetricsSource(credentialStore: credentialStore)
+            GLMMetricsSource(credentialStore: credentialStore)
         ]
         if let miniMaxSource = MiniMaxCLIMetricsSource.locate() {
             providerSources.append(miniMaxSource)

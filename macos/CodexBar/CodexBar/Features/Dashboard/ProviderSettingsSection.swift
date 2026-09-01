@@ -32,6 +32,9 @@ struct ProviderSettingsSection: View {
                     Text("默认关闭。只读取已启用的 cc-switch 代理日志；MiniMax 还可读取已安装且已登录的官方 mmx CLI，不会切换或接管 Provider。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    Text("作用：补充 Provider 没有公开的本地请求统计；没有代理日志或 CLI 登录态时不会产生数据。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Toggle("启用实验能力", isOn: Binding(

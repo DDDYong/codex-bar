@@ -255,7 +255,7 @@ final class SessionActivitySource: SessionActivityReading {
         if let providerID = ProviderID.fromCCSwitch(
             name: providerMarkers.joined(separator: " "),
             providerType: nil
-        ), providerID.isExperimental {
+        ), providerID.isExperimental || providerID == .glm {
             return providerID.providerType
         }
         return .officialCodex

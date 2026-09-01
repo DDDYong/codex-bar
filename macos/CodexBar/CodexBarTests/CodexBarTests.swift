@@ -1225,7 +1225,152 @@ final class CodexBarTests: XCTestCase {
         }
     }
 
-    func testGenericMenuBarExposesOpenRouterVerifiableMetricsWithoutSourceExplanation() {
+    func testGLMIsAFirstClassKeyBackedProvider() {
+        XCTAssertEqual(ProviderID.glm.displayName, "智谱 GLM")
+        XCTAssertEqual(ProviderID.glm.credentialKinds, [.apiKey])
+        XCTAssertFalse(ProviderID.glm.isExperimental)
+        XCTAssertEqual(ProviderID.glm.dataSourceName, "智谱 GLM")
+        XCTAssertTrue(ProviderID.glm.sourceDescription.contains("GLM-5.3-Flash"))
+    }
+
+    func testGLMSourceOnlyCallsChatCompletionDuringExplicitCredentialValidation() async throws {
+        let credentialStore = InMemoryProviderCredentialStore()
+        try credentialStore.save("test-zai-key", providerID: .glm, kind: .apiKey)
+        var requestCount = 0
+        let session = URLSession.stubbed { request in
+            requestCount += 1
+            XCTAssertEqual(request.url?.absoluteString, "https://api.z.ai/api/paas/v4/chat/completions")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-zai-key")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+
+            let body = try XCTUnwrap(httpBodyData(from: request))
+            let payload = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: body) as? [String: Any]
+            )
+            XCTAssertEqual(payload["model"] as? String, "glm-5.3-flash")
+            XCTAssertEqual(payload["max_tokens"] as? Int, 1)
+            XCTAssertEqual(payload["stream"] as? Bool, false)
+            let messages = try XCTUnwrap(payload["messages"] as? [[String: String]])
+            XCTAssertEqual(messages.first?["role"], "user")
+            XCTAssertEqual(messages.first?["content"], "连接测试")
+            return (200, Data(#"{"id":"test-completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}"#.utf8))
+        }
+        let source = GLMMetricsSource(credentialStore: credentialStore, session: session)
+
+        _ = try await source.fetchSnapshot()
+        XCTAssertEqual(requestCount, 0)
+
+        try await source.validateCredential(kind: .apiKey)
+        XCTAssertEqual(requestCount, 1)
+
+        let snapshot = try await source.fetchSnapshot()
+        XCTAssertEqual(snapshot.providerID, .glm)
+        XCTAssertNil(snapshot.balance)
+        XCTAssertTrue(snapshot.spending.isEmpty)
+        XCTAssertNil(snapshot.tokens)
+        XCTAssertEqual(snapshot.source, .providerOfficialAPI)
+        XCTAssertEqual(snapshot.coverage, .apiKey)
+        XCTAssertEqual(snapshot.sourceVersion, "glm-5.3-flash")
+    }
+
+    func testGLMSourceMapsUnauthorizedResponseWithoutLeakingServerBody() async throws {
+        let credentialStore = InMemoryProviderCredentialStore()
+        try credentialStore.save("test-zai-key", providerID: .glm, kind: .apiKey)
+        let body = "zai-server-secret-body"
+        let source = GLMMetricsSource(
+            credentialStore: credentialStore,
+            session: .stubbed { _ in (401, Data(body.utf8)) }
+        )
+
+        do {
+            try await source.validateCredential(kind: .apiKey)
+            XCTFail("无效智谱 API Key 应被拒绝")
+        } catch {
+            XCTAssertEqual(error as? ProviderMetricsError, .unauthorized("智谱 GLM"))
+            XCTAssertFalse(error.localizedDescription.contains(body))
+        }
+    }
+
+    func testGLMPresentationShowsModelConnectionAndSupportedModelFields() {
+        let snapshot = ProviderFinancialSnapshot(
+            providerID: .glm,
+            capabilities: ProviderID.glm.capabilities,
+            balance: nil,
+            spending: [],
+            tokens: nil,
+            budget: nil,
+            source: .providerOfficialAPI,
+            confidence: .reported,
+            coverage: .apiKey,
+            updatedAt: Date(timeIntervalSince1970: 123),
+            sourceVersion: "glm-5.3-flash"
+        )
+
+        XCTAssertEqual(
+            MenuBarPresentation.providerDetailLines(snapshot: snapshot),
+            ["GLM：GLM-5.3-Flash · 已连接"]
+        )
+
+        XCTAssertEqual(
+            GLMModelPresentation.metricLines(for: .providerOfficialAPI),
+            [
+                "连接状态：已连接",
+                "模型：GLM-5.3-Flash",
+                "接口：Chat Completions",
+                "模型能力：思考 · 流式输出 · 函数调用 · 上下文缓存 · 结构化输出 · 视觉理解",
+                "上下文长度：1M tokens"
+            ]
+        )
+
+        let items = MenuBarPresentation.providerItems(
+            for: .detailed,
+            snapshot: nil,
+            providerSnapshots: [.glm: snapshot],
+            enabledProviderIDs: [.glm],
+            refreshingProviderIDs: []
+        )
+        XCTAssertEqual(items[1].providerType, .custom("GLM"))
+        XCTAssertEqual(items[1].title, "GLM：GLM-5.3-Flash · 已连接")
+    }
+
+    @MainActor
+    func testSavingGLMAPIKeyValidatesOnceAndEnablesProvider() async throws {
+        let credentialStore = InMemoryProviderCredentialStore()
+        var requestCount = 0
+        let session = URLSession.stubbed { request in
+            requestCount += 1
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer candidate-zai-key")
+            return (200, Data(#"{"choices":[{"index":0}]}"#.utf8))
+        }
+        let source = GLMMetricsSource(credentialStore: credentialStore, session: session)
+        let state = AppState(
+            providerMetricsSources: [source],
+            providerCredentialStore: credentialStore,
+            enabledProviderIDs: []
+        )
+
+        await state.saveAndTestProviderCredential(
+            "candidate-zai-key",
+            providerID: .glm,
+            kind: .apiKey
+        )
+
+        XCTAssertEqual(requestCount, 1)
+        XCTAssertEqual(try credentialStore.read(providerID: .glm, kind: .apiKey), "candidate-zai-key")
+        XCTAssertTrue(state.enabledProviderIDs.contains(.glm))
+        XCTAssertNotNil(state.providerSnapshots[.glm])
+        guard case .succeeded(let message) = state.providerConnectionStates[.glm] else {
+            return XCTFail("有效智谱 API Key 应报告成功")
+        }
+        XCTAssertEqual(message, "连接成功，GLM-5.3-Flash API Key 已验证。")
+
+        await state.testProviderConnection(.glm)
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertEqual(state.providerConnectionStates[.glm], .succeeded(message))
+    }
+
+    func testGenericMenuBarDoesNotExposeRetiredProvider() {
         let snapshot = ProviderFinancialSnapshot(
             providerID: .openRouter,
             capabilities: ProviderID.openRouter.capabilities,
@@ -1250,16 +1395,7 @@ final class CodexBarTests: XCTestCase {
             refreshingProviderIDs: []
         )
 
-        XCTAssertEqual(items[1].providerType, .openRouter)
-        XCTAssertEqual(items[1].title, "$74.75 · 今日$1.50 · Key余$74.50")
-        XCTAssertEqual(MenuBarPresentation.providerDetailLines(snapshot: snapshot), [
-            "OpenRouter 可用：$74.75",
-            "累计已用：$25.75",
-            "总充值/购买：$100.50",
-            "今日消费：$1.50",
-            "Key预算：$74.50 / $100.00",
-            "今日 Token：当前链路无统计"
-        ])
+        XCTAssertEqual(items, [MenuBarProviderItem(providerType: .officialCodex, title: "5h -- · -- · Week -- · -- · --")])
     }
 
     func testDeepSeekMenuBarHidesUnsupportedPlaceholdersWhenOnlyBalanceIsAvailable() {
@@ -1518,6 +1654,29 @@ final class CodexBarTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testProviderAndFeatureTogglesRestoreAfterAppStateRecreation() {
+        let suiteName = "CodexBarTests.ToggleRestore.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settingsStore = SettingsStore(defaults: defaults)
+
+        let firstState = AppState(settingsStore: settingsStore)
+        firstState.setProviderEnabled(.deepseek, enabled: true)
+        firstState.setProviderEnabled(.glm, enabled: true)
+        firstState.setExperimentalProvidersEnabled(true)
+        firstState.setDeepSeekPlatformUsageEnabled(true)
+
+        let relaunchedState = AppState(
+            settingsStore: SettingsStore(defaults: defaults)
+        )
+
+        XCTAssertTrue(relaunchedState.enabledProviderIDs.contains(.deepseek))
+        XCTAssertTrue(relaunchedState.enabledProviderIDs.contains(.glm))
+        XCTAssertTrue(relaunchedState.experimentalProvidersEnabled)
+        XCTAssertTrue(relaunchedState.deepSeekPlatformUsageEnabled)
+    }
+
     func testProviderIDRecognizesSupportedCCSwitchProvidersWithoutTreatingOpenAIAsThirdParty() {
         XCTAssertEqual(ProviderID.fromCCSwitch(name: "DeepSeek", providerType: "deepseek"), .deepseek)
         XCTAssertEqual(ProviderID.fromCCSwitch(name: "MiniMax CN", providerType: "minimax"), .miniMax)
@@ -1526,6 +1685,11 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(ProviderID.fromCCSwitch(name: "火山方舟", providerType: "ark"), .volcengine)
         XCTAssertEqual(ProviderID.fromCCSwitch(name: "通义千问", providerType: "dashscope"), .qwen)
         XCTAssertNil(ProviderID.fromCCSwitch(name: "OpenAI Official", providerType: "openai"))
+        XCTAssertNil(ProviderID.fromCCSwitch(name: "OpenRouter", providerType: "openrouter"))
+        XCTAssertNil(ProviderID.fromCCSwitch(name: "SiliconFlow", providerType: "siliconflow"))
+        XCTAssertFalse(ProviderID.allCases.contains(.openRouter))
+        XCTAssertFalse(ProviderID.allCases.contains(.siliconFlow))
+        XCTAssertTrue(ProviderID.allCases.contains(.glm))
     }
 
     func testCCSwitchConfigReadsOnlyTheUniqueCurrentExactDeepSeekProvider() throws {
@@ -1652,6 +1816,64 @@ final class CodexBarTests: XCTestCase {
         ))
         XCTAssertEqual(report.usageByProvider[.miniMax]?.requestCount, 1)
         XCTAssertNil(report.usageByProvider[.openRouter])
+    }
+
+    @MainActor
+    func testProxyRefreshBuildsGLMDailyHistoryForTrend() {
+        let today = Date()
+        let yesterday = today.addingTimeInterval(-86_400)
+        let dayKey: (Date) -> String = { date in
+            let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+            return String(
+                format: "%04d-%02d-%02d",
+                components.year ?? 0,
+                components.month ?? 0,
+                components.day ?? 0
+            )
+        }
+        let todayUsage = ProxyDailyUsage(
+            requestCount: 3,
+            inputTokens: 900,
+            outputTokens: 300,
+            totalCostUSD: 0.12,
+            updatedAt: today
+        )
+        let yesterdayUsage = ProxyDailyUsage(
+            requestCount: 2,
+            inputTokens: 500,
+            outputTokens: 150,
+            totalCostUSD: 0.05,
+            updatedAt: yesterday
+        )
+        let source = StubProxyUsageReader(
+            result: .success(ProxyUsageReport(
+                schemaVersion: 16,
+                usageByProvider: [.glm: todayUsage],
+                detectedProviderIDs: [.glm],
+                updatedAt: today
+            )),
+            dailyResult: .success([
+                dayKey(yesterday): ProxyUsageReport(
+                    schemaVersion: 16,
+                    usageByProvider: [.glm: yesterdayUsage],
+                    detectedProviderIDs: [.glm],
+                    updatedAt: yesterday
+                ),
+                dayKey(today): ProxyUsageReport(
+                    schemaVersion: 16,
+                    usageByProvider: [.glm: todayUsage],
+                    detectedProviderIDs: [.glm],
+                    updatedAt: today
+                )
+            ])
+        )
+        let state = AppState(enabledProviderIDs: [.glm], proxyUsageSource: source)
+
+        state.refreshProxyUsage()
+
+        XCTAssertEqual(state.proxyDailyUsageHistory[.glm]?.map(\.date), [dayKey(yesterday), dayKey(today)])
+        XCTAssertEqual(state.proxyDailyUsageHistory[.glm]?.map(\.cost), [0.05, 0.12])
+        XCTAssertEqual(state.providerSnapshots[.glm]?.dailyUsage, state.proxyDailyUsageHistory[.glm])
     }
 
     func testMiniMaxCLIParserReadsOfficialTokenPlanQuotaWithoutInventingBalance() throws {
@@ -1878,12 +2100,12 @@ final class CodexBarTests: XCTestCase {
             enabledProviderIDs: [.openRouter]
         )
 
-        await state.refreshProviderMetrics()
+        await state.refreshProviderMetrics(providerID: .openRouter)
         XCTAssertEqual(state.providerSnapshots[.openRouter], snapshot)
         XCTAssertNil(state.providerErrors[.openRouter])
 
         source.result = .failure(ProviderMetricsError.rateLimited("OpenRouter"))
-        await state.refreshProviderMetrics()
+        await state.refreshProviderMetrics(providerID: .openRouter)
 
         XCTAssertEqual(state.providerSnapshots[.openRouter], snapshot)
         XCTAssertEqual(state.providerErrors[.openRouter], "OpenRouter 请求过于频繁，请稍后重试。")
@@ -2358,6 +2580,22 @@ final class CodexBarTests: XCTestCase {
         store.save(settings)
 
         XCTAssertEqual(store.load().enabledProviderIDs, [.deepseek, .openRouter])
+    }
+
+    func testSettingsStoreFlushesProviderSelectionForAppReplacement() throws {
+        let suiteName = "CodexBarTests.SettingsFlush.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var settings = AppSettings.default
+        settings.enabledProviderIDs = [.deepseek, .glm]
+
+        SettingsStore(defaults: defaults).save(settings)
+
+        let persistedData = try XCTUnwrap(
+            defaults.persistentDomain(forName: suiteName)?["app-settings-v1"] as? Data
+        )
+        let persisted = try JSONDecoder().decode(AppSettings.self, from: persistedData)
+        XCTAssertEqual(persisted.enabledProviderIDs, [.deepseek, .glm])
     }
 
     @MainActor
@@ -3113,6 +3351,25 @@ private extension URLSession {
     }
 }
 
+private func httpBodyData(from request: URLRequest) -> Data? {
+    if let httpBody = request.httpBody { return httpBody }
+    guard let stream = request.httpBodyStream else { return nil }
+
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4_096)
+    while stream.hasBytesAvailable {
+        let count = buffer.withUnsafeMutableBufferPointer { bufferPointer -> Int in
+            guard let baseAddress = bufferPointer.baseAddress else { return 0 }
+            return stream.read(baseAddress, maxLength: bufferPointer.count)
+        }
+        guard count > 0 else { break }
+        data.append(contentsOf: buffer[0..<count])
+    }
+    return data.isEmpty ? nil : data
+}
+
 private final class StubProviderMetricsSource: ProviderMetricsSource, ProviderCredentialValidating {
     let providerID: ProviderID
     let capabilities: ProviderCapabilities
@@ -3291,15 +3548,24 @@ private final class StubDeepSeekPlatformUsageSource: DeepSeekPlatformUsageReadin
     }
 }
 
-private final class StubProxyUsageReader: ProxyUsageReading {
+private final class StubProxyUsageReader: ProxyUsageReading, ProxyUsageHistoryReading {
     var result: Result<ProxyUsageReport, Error>
+    var dailyResult: Result<[String: ProxyUsageReport], Error>
 
-    init(result: Result<ProxyUsageReport, Error>) {
+    init(
+        result: Result<ProxyUsageReport, Error>,
+        dailyResult: Result<[String: ProxyUsageReport], Error> = .success([:])
+    ) {
         self.result = result
+        self.dailyResult = dailyResult
     }
 
     func todayReport(appType: String, now: Date) throws -> ProxyUsageReport {
         try result.get()
+    }
+
+    func dailyReports(appType: String, days: Int, now: Date) throws -> [String: ProxyUsageReport] {
+        try dailyResult.get()
     }
 }
 

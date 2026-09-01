@@ -22,9 +22,38 @@ fi
 stop_running_apps() {
   local process_name
   local attempt
+  local has_running_app=false
 
   for process_name in "${STALE_PROCESS_NAMES[@]}"; do
-    pkill -x "$process_name" >/dev/null 2>&1 || true
+    if pgrep -x "$process_name" >/dev/null; then
+      has_running_app=true
+      break
+    fi
+  done
+
+  if [[ "$has_running_app" == true ]]; then
+    /usr/bin/osascript -e 'tell application id "com.codexbar.app" to quit' >/dev/null 2>&1 || true
+  fi
+
+  for attempt in {1..20}; do
+    local is_running=false
+
+    for process_name in "${STALE_PROCESS_NAMES[@]}"; do
+      if pgrep -x "$process_name" >/dev/null; then
+        is_running=true
+        break
+      fi
+    done
+
+    if [[ "$is_running" == false ]]; then
+      return
+    fi
+
+    sleep 0.1
+  done
+
+  for process_name in "${STALE_PROCESS_NAMES[@]}"; do
+    pkill -TERM -x "$process_name" >/dev/null 2>&1 || true
   done
 
   for attempt in {1..20}; do

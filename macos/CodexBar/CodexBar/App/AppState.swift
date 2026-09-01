@@ -113,6 +113,7 @@ final class AppState: ObservableObject {
     @Published private(set) var experimentalProvidersEnabled = false
     @Published private(set) var deepSeekPlatformUsageEnabled = false
     @Published private(set) var proxyUsageByProvider: [ProviderID: ProxyDailyUsage] = [:]
+    @Published private(set) var proxyDailyUsageHistory: [ProviderID: [ProviderDailyUsageSnapshot]] = [:]
     @Published private(set) var detectedProxyProviderIDs: Set<ProviderID> = []
     @Published private(set) var proxyUsageError: String?
     @Published private(set) var proxySchemaVersion: Int?
@@ -271,7 +272,9 @@ final class AppState: ObservableObject {
     }
 
     var effectiveEnabledProviderIDs: Set<ProviderID> {
-        Set(enabledProviderIDs.filter { !($0.isExperimental && !experimentalProvidersEnabled) })
+        Set(enabledProviderIDs.filter {
+            !$0.isRetired && !($0.isExperimental && !experimentalProvidersEnabled)
+        })
     }
 
     var orderedProviderSnapshots: [ProviderFinancialSnapshot] {
@@ -548,14 +551,27 @@ final class AppState: ObservableObject {
         guard let proxyUsageSource else { return [:] }
         var refreshed: [ProviderID: ProviderFinancialSnapshot] = [:]
         do {
-            let report = try proxyUsageSource.todayReport(appType: "codex", now: Date())
+            let now = Date()
+            let report = try proxyUsageSource.todayReport(appType: "codex", now: now)
             proxyUsageByProvider = report.usageByProvider
             detectedProxyProviderIDs = report.detectedProviderIDs
             proxySchemaVersion = report.schemaVersion
             proxyUsageError = nil
+
+            var reportsByDay = [Self.proxyDayKey(now): report]
+            if let historySource = proxyUsageSource as? any ProxyUsageHistoryReading,
+               let reports = try? historySource.dailyReports(appType: "codex", days: 7, now: now) {
+                reportsByDay.merge(reports) { _, newest in newest }
+            }
+            proxyDailyUsageHistory = Self.proxyDailySnapshots(from: reportsByDay)
+
             for (providerID, usage) in report.usageByProvider where effectiveEnabledProviderIDs.contains(providerID) {
                 if providerSnapshots[providerID] == nil || providerSnapshots[providerID]?.source == .localProxy {
-                    let snapshot = Self.proxySnapshot(providerID: providerID, usage: usage)
+                    let snapshot = Self.proxySnapshot(
+                        providerID: providerID,
+                        usage: usage,
+                        dailyUsage: proxyDailyUsageHistory[providerID] ?? []
+                    )
                     providerSnapshots[providerID] = snapshot
                     providerErrors[providerID] = nil
                     refreshed[providerID] = snapshot
@@ -713,6 +729,18 @@ final class AppState: ObservableObject {
 
     func testProviderConnection(_ providerID: ProviderID) async {
         providerConnectionStates[providerID] = .testing
+
+        if let tester = providerMetricsSources[providerID] as? any ProviderConnectionTesting {
+            do {
+                try await tester.testConnection()
+            } catch {
+                let message = error.localizedDescription
+                providerErrors[providerID] = message
+                providerConnectionStates[providerID] = .failed(message)
+                return
+            }
+        }
+
         await refreshProviderMetrics(providerID: providerID)
         if let error = providerErrors[providerID] {
             providerConnectionStates[providerID] = .failed(error)
@@ -722,6 +750,9 @@ final class AppState: ObservableObject {
     }
 
     private func providerConnectionSuccessMessage(for providerID: ProviderID) -> String {
+        if providerID == .glm {
+            return "连接成功，GLM-5.3-Flash API Key 已验证。"
+        }
         guard let snapshot = providerSnapshots[providerID], !snapshot.issues.isEmpty else {
             return "连接成功，已读取官方指标。"
         }
@@ -1129,7 +1160,11 @@ final class AppState: ObservableObject {
         settingsStore.save(settings)
     }
 
-    private static func proxySnapshot(providerID: ProviderID, usage: ProxyDailyUsage) -> ProviderFinancialSnapshot {
+    private static func proxySnapshot(
+        providerID: ProviderID,
+        usage: ProxyDailyUsage,
+        dailyUsage: [ProviderDailyUsageSnapshot] = []
+    ) -> ProviderFinancialSnapshot {
         ProviderFinancialSnapshot(
             providerID: providerID,
             capabilities: providerID.capabilities,
@@ -1148,11 +1183,44 @@ final class AppState: ObservableObject {
                 period: .today,
                 coverage: .proxiedRequests
             ),
+            dailyUsage: dailyUsage,
             budget: nil,
             source: .localProxy,
             confidence: .estimated,
             coverage: .proxiedRequests,
             updatedAt: usage.updatedAt
+        )
+    }
+
+    private static func proxyDailySnapshots(
+        from reports: [String: ProxyUsageReport]
+    ) -> [ProviderID: [ProviderDailyUsageSnapshot]] {
+        var snapshots: [ProviderID: [ProviderDailyUsageSnapshot]] = [:]
+        for date in reports.keys.sorted() {
+            guard let report = reports[date] else { continue }
+            for (providerID, usage) in report.usageByProvider {
+                snapshots[providerID, default: []].append(
+                    ProviderDailyUsageSnapshot(
+                        date: date,
+                        cost: usage.totalCostUSD,
+                        tokenCount: usage.totalTokens,
+                        requestCount: usage.requestCount,
+                        currency: "USD"
+                    )
+                )
+            }
+        }
+        return snapshots
+    }
+
+    private static func proxyDayKey(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
         )
     }
 

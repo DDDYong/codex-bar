@@ -905,7 +905,11 @@ protocol ProxyUsageReading: AnyObject {
     func todayReport(appType: String, now: Date) throws -> ProxyUsageReport
 }
 
-final class ProxyUsageSource: ProxyUsageReading {
+protocol ProxyUsageHistoryReading: AnyObject {
+    func dailyReports(appType: String, days: Int, now: Date) throws -> [String: ProxyUsageReport]
+}
+
+final class ProxyUsageSource: ProxyUsageReading, ProxyUsageHistoryReading {
     private let dbPath: String
 
     init(dbPath: String = NSHomeDirectory() + "/.cc-switch/cc-switch.db") {
@@ -1007,6 +1011,36 @@ final class ProxyUsageSource: ProxyUsageReading {
             usageByProvider: usageByProvider,
             detectedProviderIDs: Set(usageByProvider.keys),
             updatedAt: now
+        )
+    }
+
+    func dailyReports(
+        appType: String = "codex",
+        days: Int = 7,
+        now: Date = Date()
+    ) throws -> [String: ProxyUsageReport] {
+        guard days > 0 else { return [:] }
+        let calendar = Calendar.current
+        let dayCount = min(days, 31)
+        var reports: [String: ProxyUsageReport] = [:]
+
+        for offset in stride(from: dayCount - 1, through: 0, by: -1) {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: now) else {
+                throw ProxyUsageError.queryFailed
+            }
+            let report = try todayReport(appType: appType, now: day)
+            reports[Self.dayKey(day, calendar: calendar)] = report
+        }
+        return reports
+    }
+
+    private static func dayKey(_ date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
         )
     }
 

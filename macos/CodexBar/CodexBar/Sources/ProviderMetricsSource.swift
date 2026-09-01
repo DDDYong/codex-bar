@@ -37,6 +37,10 @@ protocol ProviderCredentialValidating: AnyObject {
     func validateCredential(kind: ProviderCredentialKind) async throws
 }
 
+protocol ProviderConnectionTesting: AnyObject {
+    func testConnection() async throws
+}
+
 struct FixedHostHTTPSPolicy: Equatable {
     let allowedHosts: Set<String>
     let maximumResponseBytes: Int
@@ -134,6 +138,29 @@ struct ProviderAPIClient {
         request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        return try await send(request)
+    }
+
+    func postJSON(_ url: URL, bearerToken: String, body: Data) async throws -> Data {
+        guard policy.allows(url) else {
+            throw ProviderMetricsError.unsafeEndpoint(providerName)
+        }
+        guard !bearerToken.isEmpty else {
+            throw ProviderMetricsError.credentialMissing(providerName)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpBody = body
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        return try await send(request)
+    }
+
+    private func send(_ request: URLRequest) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
@@ -159,6 +186,122 @@ struct ProviderAPIClient {
             throw ProviderMetricsError.unavailable(providerName)
         }
         return data
+    }
+}
+
+final class GLMMetricsSource: ProviderMetricsSource, ProviderCredentialValidating, ProviderConnectionTesting {
+    static let model = "glm-5.3-flash"
+
+    let providerID: ProviderID = .glm
+    let capabilities: ProviderCapabilities = ProviderID.glm.capabilities
+
+    private let credentialStore: ProviderCredentialStoring
+    private let client: ProviderAPIClient
+    private let chatCompletionsURL = URL(string: "https://api.z.ai/api/paas/v4/chat/completions")!
+
+    init(credentialStore: ProviderCredentialStoring, session: URLSession? = nil) {
+        self.credentialStore = credentialStore
+        self.client = ProviderAPIClient(
+            providerName: ProviderID.glm.displayName,
+            allowedHosts: ["api.z.ai"],
+            session: session
+        )
+    }
+
+    var isConfigured: Bool {
+        credentialStore.contains(providerID: providerID, kind: .apiKey)
+    }
+
+    func validateCredential(kind: ProviderCredentialKind) async throws {
+        guard kind == .apiKey else {
+            throw ProviderMetricsError.credentialMissing(providerID.displayName)
+        }
+
+        let credential = try readCredential()
+        let body: Data
+        do {
+            body = try JSONEncoder().encode(GLMChatCompletionRequest.connectionTest)
+        } catch {
+            throw ProviderMetricsError.invalidResponse(providerID.displayName)
+        }
+
+        let data = try await client.postJSON(chatCompletionsURL, bearerToken: credential, body: body)
+        do {
+            let response = try JSONDecoder().decode(GLMChatCompletionResponse.self, from: data)
+            guard !response.choices.isEmpty else {
+                throw ProviderMetricsError.invalidResponse(providerID.displayName)
+            }
+        } catch let error as ProviderMetricsError {
+            throw error
+        } catch {
+            throw ProviderMetricsError.invalidResponse(providerID.displayName)
+        }
+    }
+
+    func testConnection() async throws {
+        try await validateCredential(kind: .apiKey)
+    }
+
+    func fetchSnapshot() async throws -> ProviderFinancialSnapshot {
+        guard isConfigured else {
+            throw ProviderMetricsError.credentialMissing(providerID.displayName)
+        }
+
+        return ProviderFinancialSnapshot(
+            providerID: providerID,
+            capabilities: capabilities,
+            balance: nil,
+            spending: [],
+            tokens: nil,
+            budget: nil,
+            source: .providerOfficialAPI,
+            confidence: .reported,
+            coverage: .apiKey,
+            updatedAt: Date(),
+            sourceVersion: Self.model
+        )
+    }
+
+    private func readCredential() throws -> String {
+        do {
+            return try credentialStore.read(providerID: providerID, kind: .apiKey)
+        } catch ProviderCredentialStoreError.notFound {
+            throw ProviderMetricsError.credentialMissing(providerID.displayName)
+        }
+    }
+}
+
+private struct GLMChatCompletionRequest: Encodable {
+    struct Message: Encodable {
+        let role: String
+        let content: String
+    }
+
+    let model: String
+    let messages: [Message]
+    let maxTokens: Int
+    let stream: Bool
+
+    static let connectionTest = GLMChatCompletionRequest(
+        model: GLMMetricsSource.model,
+        messages: [Message(role: "user", content: "连接测试")],
+        maxTokens: 1,
+        stream: false
+    )
+
+    private enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case maxTokens = "max_tokens"
+        case stream
+    }
+}
+
+private struct GLMChatCompletionResponse: Decodable {
+    let choices: [Choice]
+
+    struct Choice: Decodable {
+        let index: Int?
     }
 }
 

@@ -10,6 +10,24 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
     case volcengine
     case qwen
 
+    // OpenRouter and SiliconFlow remain decodable for old settings and snapshots,
+    // but are no longer active Provider integrations in the product.
+    static let allCases: [ProviderID] = [
+        .deepseek,
+        .glm,
+        .kimi,
+        .miniMax,
+        .volcengine,
+        .qwen
+    ]
+
+    var isRetired: Bool {
+        switch self {
+        case .openRouter, .siliconFlow: true
+        default: false
+        }
+    }
+
     var id: String { rawValue }
 
     var displayName: String {
@@ -18,7 +36,7 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
         case .openRouter: "OpenRouter"
         case .siliconFlow: "SiliconFlow"
         case .kimi: "Kimi"
-        case .glm: "GLM"
+        case .glm: "智谱 GLM"
         case .miniMax: "MiniMax"
         case .volcengine: "火山方舟"
         case .qwen: "通义千问"
@@ -57,7 +75,8 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
         switch self {
         case .deepseek, .siliconFlow: [.apiKey]
         case .openRouter: [.managementKey, .apiKey]
-        case .kimi, .glm, .miniMax, .volcengine, .qwen: []
+        case .glm: [.apiKey]
+        case .kimi, .miniMax, .volcengine, .qwen: []
         }
     }
 
@@ -69,7 +88,9 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
             "官方 /credits + /key：账户 credits、Key 预算与周期消费"
         case .siliconFlow:
             "官方 /v1/user/info：账户可用余额"
-        case .kimi, .glm, .volcengine, .qwen:
+        case .glm:
+            "官方 GLM-5.3-Flash API：本地钥匙串凭据与连接测试（不返回余额/累计用量）"
+        case .kimi, .volcengine, .qwen:
             "实验：只读 cc-switch 已有代理日志，不接管 Provider 路由"
         case .miniMax:
             "实验：官方 mmx CLI 配额（如已安装登录）+ 只读代理日志"
@@ -82,7 +103,7 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
         case .openRouter: "OpenRouter 余额与用量"
         case .siliconFlow: "SiliconFlow 余额"
         case .kimi: "Kimi 实验指标"
-        case .glm: "GLM 实验指标"
+        case .glm: "智谱 GLM"
         case .miniMax: "MiniMax 实验指标"
         case .volcengine: "火山方舟实验指标"
         case .qwen: "通义千问实验指标"
@@ -91,8 +112,8 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
 
     var isExperimental: Bool {
         switch self {
-        case .kimi, .glm, .miniMax, .volcengine, .qwen: true
-        case .deepseek, .openRouter, .siliconFlow: false
+        case .kimi, .miniMax, .volcengine, .qwen: true
+        case .deepseek, .openRouter, .siliconFlow, .glm: false
         }
     }
 
@@ -100,14 +121,41 @@ enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable {
         let marker = "\(name) \(providerType ?? "")".lowercased()
         if marker.contains("openai") { return nil }
         if marker.contains("deepseek") { return .deepseek }
-        if marker.contains("openrouter") || marker.contains("open router") { return .openRouter }
-        if marker.contains("siliconflow") || marker.contains("silicon flow") { return .siliconFlow }
+        // These integrations were retired from the active Provider list. Ignore
+        // new proxy rows while keeping the enum cases for legacy decoding.
+        if marker.contains("openrouter") || marker.contains("open router") { return nil }
+        if marker.contains("siliconflow") || marker.contains("silicon flow") { return nil }
         if marker.contains("minimax") { return .miniMax }
         if marker.contains("moonshot") || marker.contains("kimi") { return .kimi }
         if marker.contains("bigmodel") || marker.contains("zhipu") || marker.contains("glm") || marker.contains("智谱") { return .glm }
         if marker.contains("volc") || marker.contains("ark") || marker.contains("火山") || marker.contains("方舟") { return .volcengine }
         if marker.contains("dashscope") || marker.contains("qwen") || marker.contains("千问") || marker.contains("通义") { return .qwen }
         return nil
+    }
+}
+
+enum GLMModelPresentation {
+    static let model = "GLM-5.3-Flash"
+    static let interface = "Chat Completions"
+    static let capabilities = "思考 · 流式输出 · 函数调用 · 上下文缓存 · 结构化输出 · 视觉理解"
+    static let contextLength = "1M tokens"
+
+    static func connectionStatus(for source: MetricSource) -> String {
+        source == .localProxy ? "本地代理" : "已连接"
+    }
+
+    static func menuTitle(for source: MetricSource) -> String {
+        "GLM：\(model) · \(connectionStatus(for: source))"
+    }
+
+    static func metricLines(for source: MetricSource) -> [String] {
+        [
+            "连接状态：\(connectionStatus(for: source))",
+            "模型：\(model)",
+            "接口：\(interface)",
+            "模型能力：\(capabilities)",
+            "上下文长度：\(contextLength)"
+        ]
     }
 }
 
@@ -130,6 +178,8 @@ enum ProviderCredentialKind: String, Codable, Hashable, Identifiable {
             "用于读取账户购买 credits 与累计使用，不用于模型推理。"
         case (.openRouter, .apiKey):
             "用于读取当前推理 Key 的预算及日、周、月消费。"
+        case (.glm, .apiKey):
+            "用于调用官方 GLM-5.3-Flash 的连接测试；凭据只保存在钥匙串。测试会发送一次最小请求，可能消耗少量配额。"
         default:
             "仅用于查询该 Provider 的只读余额或用量接口。"
         }

@@ -114,5 +114,8 @@ final class SettingsStore {
     func save(_ settings: AppSettings) {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         defaults.set(data, forKey: key)
+        // The local installer may replace the running app immediately after a toggle.
+        // Flush this small settings blob so the latest provider selection survives it.
+        defaults.synchronize()
     }
 }
