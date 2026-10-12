@@ -278,7 +278,9 @@ final class AppState: ObservableObject {
     }
 
     var orderedProviderSnapshots: [ProviderFinancialSnapshot] {
-        ProviderID.allCases.compactMap { providerSnapshots[$0] }
+        ProviderID.allCases
+            .filter { effectiveEnabledProviderIDs.contains($0) }
+            .compactMap { providerSnapshots[$0] }
     }
 
     func isProviderConfigured(_ providerID: ProviderID) -> Bool {
@@ -553,8 +555,9 @@ final class AppState: ObservableObject {
         do {
             let now = Date()
             let report = try proxyUsageSource.todayReport(appType: "codex", now: now)
-            proxyUsageByProvider = report.usageByProvider
-            detectedProxyProviderIDs = report.detectedProviderIDs
+            let enabledIDs = effectiveEnabledProviderIDs
+            proxyUsageByProvider = report.usageByProvider.filter { enabledIDs.contains($0.key) }
+            detectedProxyProviderIDs = report.detectedProviderIDs.intersection(enabledIDs)
             proxySchemaVersion = report.schemaVersion
             proxyUsageError = nil
 
@@ -564,8 +567,9 @@ final class AppState: ObservableObject {
                 reportsByDay.merge(reports) { _, newest in newest }
             }
             proxyDailyUsageHistory = Self.proxyDailySnapshots(from: reportsByDay)
+                .filter { enabledIDs.contains($0.key) }
 
-            for (providerID, usage) in report.usageByProvider where effectiveEnabledProviderIDs.contains(providerID) {
+            for (providerID, usage) in proxyUsageByProvider {
                 if providerSnapshots[providerID] == nil || providerSnapshots[providerID]?.source == .localProxy {
                     let snapshot = Self.proxySnapshot(
                         providerID: providerID,
@@ -592,6 +596,9 @@ final class AppState: ObservableObject {
             let credentialCleanupError = rollbackCredentialTransactions(providerID: providerID)
             enabledProviderIDs.remove(providerID)
             providerSnapshots[providerID] = nil
+            proxyUsageByProvider[providerID] = nil
+            proxyDailyUsageHistory[providerID] = nil
+            detectedProxyProviderIDs.remove(providerID)
             providerErrors[providerID] = nil
             providerConnectionStates[providerID] = credentialCleanupError.map(ProviderConnectionState.failed) ?? .idle
         }
@@ -634,6 +641,12 @@ final class AppState: ObservableObject {
         var settings = settingsStore.load()
         settings.deepSeekPlatformUsageEnabled = enabled
         settingsStore.save(settings)
+        guard enabledProviderIDs.contains(.deepseek) else {
+            providerSnapshots[.deepseek] = nil
+            proxyUsageByProvider[.deepseek] = nil
+            proxyDailyUsageHistory[.deepseek] = nil
+            return
+        }
         Task { await refreshProviderMetrics(providerID: .deepseek) }
     }
 

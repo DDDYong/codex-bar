@@ -13,6 +13,7 @@ INSTALLED_APP_BINARY="$INSTALLED_APP_BUNDLE/Contents/MacOS/$APP_NAME"
 LEGACY_APP_BUNDLE="/Applications/Codex Bar.app"
 BUNDLE_ID="com.codexbar.app"
 STALE_PROCESS_NAMES=("CodexBar" "Codex Bar")
+LAUNCH_SERVICES_REGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
 
 if [[ ! -d "$PROJECT" ]]; then
   echo "Xcode project was not found: $PROJECT" >&2
@@ -142,6 +143,14 @@ install_app() {
 }
 
 install_app
+
+unregister_build_bundle() {
+  if [[ -x "$LAUNCH_SERVICES_REGISTER" && -d "$APP_BUNDLE" ]]; then
+    "$LAUNCH_SERVICES_REGISTER" -u "$APP_BUNDLE" >/dev/null 2>&1 || true
+  fi
+}
+
+unregister_build_bundle
 
 open_app() {
   /usr/bin/open "$INSTALLED_APP_BUNDLE"

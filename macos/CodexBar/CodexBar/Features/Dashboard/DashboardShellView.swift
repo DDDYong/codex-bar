@@ -2236,13 +2236,22 @@ enum UsagePageLayout {
         enabledProviderIDs: Set<ProviderID>,
         hasDeepSeekSnapshot: Bool
     ) -> ResetPlacement {
+        _ = hasDeepSeekSnapshot
         if enabledProviderIDs.isEmpty {
             return .besideChatGPT
         }
-        if enabledProviderIDs.contains(.deepseek) || hasDeepSeekSnapshot {
+        if enabledProviderIDs.contains(.deepseek) {
             return .besideAPITrend
         }
         return .fullWidth
+    }
+
+    static func visibleTrendProviderIDs(enabledProviderIDs: Set<ProviderID>) -> [ProviderID] {
+        [.deepseek, .glm].filter { enabledProviderIDs.contains($0) }
+    }
+
+    static func shouldShowDeepSeekHistory(enabledProviderIDs: Set<ProviderID>) -> Bool {
+        enabledProviderIDs.contains(.deepseek)
     }
 }
 
@@ -2255,11 +2264,7 @@ private struct UsagePrototypePage: View {
     }
 
     private var trendProviderIDs: [ProviderID] {
-        [.deepseek, .glm].filter { providerID in
-            enabledProviderIDs.contains(providerID)
-                || appState.providerSnapshots[providerID] != nil
-                || !(appState.proxyDailyUsageHistory[providerID] ?? []).isEmpty
-        }
+        UsagePageLayout.visibleTrendProviderIDs(enabledProviderIDs: enabledProviderIDs)
     }
 
     var body: some View {
@@ -2301,19 +2306,16 @@ private struct UsagePrototypePage: View {
                                 proxyDailyUsage: appState.proxyDailyUsageHistory[providerID] ?? []
                             )
                         }
-                        if trendProviderIDs.isEmpty {
-                            UsageAPITrendCard(
-                                providerID: .deepseek,
-                                snapshot: nil,
-                                proxyUsage: nil,
-                                proxyDailyUsage: []
-                            )
-                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
 
-                UsageUnifiedHistoryCard(records: Array(appState.snapshots.suffix(8).reversed()))
+                UsageUnifiedHistoryCard(
+                    records: Array(appState.snapshots.suffix(8).reversed()),
+                    showsDeepSeek: UsagePageLayout.shouldShowDeepSeekHistory(
+                        enabledProviderIDs: enabledProviderIDs
+                    )
+                )
             }
             .padding(22)
         }
@@ -2752,6 +2754,7 @@ enum UsageHistoryPresentation {
 
 private struct UsageUnifiedHistoryCard: View {
     let records: [UsageSnapshotRecord]
+    let showsDeepSeek: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2764,7 +2767,8 @@ private struct UsageUnifiedHistoryCard: View {
                 available: "DeepSeek 可用",
                 today: "今日消费",
                 tokens: "今日用量",
-                isHeader: true
+                isHeader: true,
+                showsDeepSeek: showsDeepSeek
             )
             Divider().overlay(PrototypePalette.line)
 
@@ -2776,15 +2780,18 @@ private struct UsageUnifiedHistoryCard: View {
             } else {
                 ForEach(records) { record in
                     let deepSeek = record.providerUsage?.first { $0.providerID == .deepseek }
-                    let providerValues = UsageHistoryPresentation.providerValues(deepSeek)
+                    let providerValues = showsDeepSeek
+                        ? UsageHistoryPresentation.providerValues(deepSeek)
+                        : nil
                     historyRow(
                         time: UIStamp.string(record.capturedAt),
                         week: String(format: "%.0f%%", record.weeklyRemainingPercent),
                         reset: record.resetCredits.map { "\($0) 次" } ?? "--",
-                        available: providerValues.available,
-                        today: providerValues.todaySpend,
-                        tokens: providerValues.todayTokens,
-                        isHeader: false
+                        available: providerValues?.available ?? "--",
+                        today: providerValues?.todaySpend ?? "--",
+                        tokens: providerValues?.todayTokens ?? "--",
+                        isHeader: false,
+                        showsDeepSeek: showsDeepSeek
                     )
                     Divider().overlay(PrototypePalette.line)
                 }
@@ -2801,15 +2808,18 @@ private struct UsageUnifiedHistoryCard: View {
         available: String,
         today: String,
         tokens: String,
-        isHeader: Bool
+        isHeader: Bool,
+        showsDeepSeek: Bool
     ) -> some View {
         HStack(spacing: 12) {
             Text(time).frame(minWidth: 138, maxWidth: .infinity, alignment: .leading)
             Text(week).frame(minWidth: 82, maxWidth: .infinity)
             Text(reset).frame(minWidth: 54, maxWidth: .infinity)
-            Text(available).frame(minWidth: 90, maxWidth: .infinity)
-            Text(today).frame(minWidth: 74, maxWidth: .infinity)
-            Text(tokens).frame(minWidth: 70, maxWidth: .infinity)
+            if showsDeepSeek {
+                Text(available).frame(minWidth: 90, maxWidth: .infinity)
+                Text(today).frame(minWidth: 74, maxWidth: .infinity)
+                Text(tokens).frame(minWidth: 70, maxWidth: .infinity)
+            }
         }
         .font(isHeader ? .caption.weight(.semibold) : .caption)
         .foregroundStyle(isHeader ? .secondary : .primary)

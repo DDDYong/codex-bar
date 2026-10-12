@@ -296,6 +296,31 @@ final class CodexBarTests: XCTestCase {
             UsagePageLayout.resetPlacement(enabledProviderIDs: [.openRouter], hasDeepSeekSnapshot: false),
             .fullWidth
         )
+        XCTAssertEqual(
+            UsagePageLayout.resetPlacement(enabledProviderIDs: [.openRouter], hasDeepSeekSnapshot: true),
+            .fullWidth
+        )
+    }
+
+    func testUsagePageProviderDetailsFollowTheProviderToggle() {
+        XCTAssertEqual(
+            UsagePageLayout.visibleTrendProviderIDs(enabledProviderIDs: []),
+            []
+        )
+        XCTAssertEqual(
+            UsagePageLayout.visibleTrendProviderIDs(enabledProviderIDs: [.deepseek]),
+            [.deepseek]
+        )
+        XCTAssertEqual(
+            UsagePageLayout.visibleTrendProviderIDs(enabledProviderIDs: [.glm]),
+            [.glm]
+        )
+        XCTAssertFalse(
+            UsagePageLayout.shouldShowDeepSeekHistory(enabledProviderIDs: [])
+        )
+        XCTAssertTrue(
+            UsagePageLayout.shouldShowDeepSeekHistory(enabledProviderIDs: [.deepseek])
+        )
     }
 
     func testUsageParserSupportsSnakeCaseAndCamelCaseWindows() throws {
@@ -1874,6 +1899,33 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(state.proxyDailyUsageHistory[.glm]?.map(\.date), [dayKey(yesterday), dayKey(today)])
         XCTAssertEqual(state.proxyDailyUsageHistory[.glm]?.map(\.cost), [0.05, 0.12])
         XCTAssertEqual(state.providerSnapshots[.glm]?.dailyUsage, state.proxyDailyUsageHistory[.glm])
+    }
+
+    @MainActor
+    func testProxyRefreshDoesNotPublishDisabledProviderTelemetry() {
+        let now = Date()
+        let deepSeekUsage = ProxyDailyUsage(
+            requestCount: 1,
+            inputTokens: 100,
+            outputTokens: 50,
+            totalCostUSD: 0.01,
+            updatedAt: now
+        )
+        let source = StubProxyUsageReader(
+            result: .success(ProxyUsageReport(
+                schemaVersion: 16,
+                usageByProvider: [.deepseek: deepSeekUsage],
+                detectedProviderIDs: [.deepseek],
+                updatedAt: now
+            ))
+        )
+        let state = AppState(enabledProviderIDs: [], proxyUsageSource: source)
+
+        state.refreshProxyUsage()
+
+        XCTAssertNil(state.proxyUsageByProvider[.deepseek])
+        XCTAssertNil(state.proxyDailyUsageHistory[.deepseek])
+        XCTAssertNil(state.providerSnapshots[.deepseek])
     }
 
     func testMiniMaxCLIParserReadsOfficialTokenPlanQuotaWithoutInventingBalance() throws {
