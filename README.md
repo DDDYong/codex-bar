@@ -10,7 +10,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
   - 显示额度摘要与会话活动状态。
   - 仅当两个或更多 Provider 的会话同时处于运行状态时，每 6 秒轮播；只运行一方时固定显示正在消耗额度/金额的 Provider，全部空闲时默认显示 ChatGPT。
   - 轮播项使用统一占位宽度，Provider 图标、指标和右下角活动指示灯始终成组切换。
-  - 第三方显示方式：详细为“图标 + 可用/预算/配额 + Provider 可核验明细”，简略为“图标 + 可用余额、Key 预算或配额”，仅图标不显示指标文字。
+  - 状态栏支持单行/多行与左、中、右对齐：详细显示 5 小时指标与周额度重置信息，简略只保留两组核心额度，第三方统一为“主指标 / 辅助指标”；完整 Provider 明细在展开面板查看，仅图标不显示指标文字。
   - 支持打开仪表板、立即刷新、切换显示方式、登录时启动和退出。
 - 仪表板
   - 显示 Week 额度、Reset 次数、到期时间、最近额度快照趋势。
@@ -31,7 +31,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
   - 展示各数据源状态。
   - 支持主题、菜单栏显示方式、快照保留期、会话/插件索引与 Token 热力图周期设置。
   - 支持 DeepSeek、智谱 GLM 的独立启用、钥匙串凭据管理和连接测试；OpenRouter、SiliconFlow 已从活动 Provider 列表移除。
-  - Provider 与实验能力开关保存到本机设置；首次安装默认关闭，后续启动恢复上一次状态。
+  - 所有第三方 Provider（包括 DeepSeek、智谱 GLM 和实验 Provider）首次安装默认关闭；用户主动启用后保存到本机设置，后续启动恢复上一次状态。
   - Kimi、MiniMax、火山方舟、通义千问位于默认关闭的实验区；实验能力和智谱 GLM 直连都不会更改 Codex 或 cc-switch 的 Provider 路由。
 
 ## 数据来源与统计口径
@@ -96,7 +96,7 @@ Codex Bar 是一个面向 macOS 的原生 SwiftUI 菜单栏应用，用于在本
 ./script/build_and_run.sh
 ```
 
-脚本会停止旧进程、构建 Debug 版本、安装到 `/Applications/CodexBar.app` 并启动。它也会清理遗留的 `/Applications/Codex Bar.app`，确保系统只保留一个应用副本。
+脚本会停止旧进程、构建 Debug 版本、安装到 `/Applications/CodexBar.app` 并启动。它也会清理遗留的 `/Applications/Codex Bar.app`，注销项目 `.build` 与 Xcode DerivedData 中的旧 LaunchServices 注册，确保系统只保留一个应用入口。
 
 当前原生 SwiftUI 应用的 Debug 与 Release Bundle ID 均为 `com.codexbar.app`，`MARKETING_VERSION` 与当前 `v0.1.9` tag 对齐。仓库不据此推断既有 DMG 的升级身份；构建与安装流程不会尝试删除系统登录项。
 
@@ -166,7 +166,7 @@ codex-bar/
 
 ### 应用为什么每次构建后只有一个副本？
 
-`script/build_and_run.sh` 固定将最新构建安装到 `/Applications/CodexBar.app`，并在启动前终止旧进程、删除旧命名的应用副本。
+`script/build_and_run.sh` 固定将最新构建安装到 `/Applications/CodexBar.app`，并在启动前终止旧进程、删除旧命名的应用副本、注销旧构建路径的 LaunchServices 注册。不要直接打开 `.build` 或 Xcode DerivedData 中的应用副本，否则系统可能再次显示多个 CodexBar 图标。
 
 ### 如何配置智谱 GLM？
 

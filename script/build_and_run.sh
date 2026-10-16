@@ -14,6 +14,10 @@ LEGACY_APP_BUNDLE="/Applications/Codex Bar.app"
 BUNDLE_ID="com.codexbar.app"
 STALE_PROCESS_NAMES=("CodexBar" "Codex Bar")
 LAUNCH_SERVICES_REGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
+USER_HOME="${HOME:-}"
+QUARANTINE_DIR=""
+QUARANTINE_RUN_ID=""
+QUARANTINED_COUNT=0
 
 if [[ ! -d "$PROJECT" ]]; then
   echo "Xcode project was not found: $PROJECT" >&2
@@ -89,6 +93,85 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
   exit 1
 fi
 
+unregister_bundle_from_launch_services() {
+  local bundle="$1"
+
+  if [[ -x "$LAUNCH_SERVICES_REGISTER" && -d "$bundle" ]]; then
+    "$LAUNCH_SERVICES_REGISTER" -u "$bundle" >/dev/null 2>&1 || true
+  fi
+}
+
+create_quarantine_directory() {
+  if [[ -n "$QUARANTINE_DIR" ]]; then
+    return
+  fi
+
+  if [[ -z "$USER_HOME" ]]; then
+    echo "Cannot quarantine stale app bundles because the user home directory is unavailable" >&2
+    exit 1
+  fi
+
+  /bin/mkdir -p "$USER_HOME/Library/Caches"
+  QUARANTINE_DIR="$USER_HOME/Library/Caches/CodexBar-launchpad-quarantine.noindex"
+  /bin/mkdir -p "$QUARANTINE_DIR"
+  QUARANTINE_RUN_ID="$(/bin/date +%Y%m%d%H%M%S)-$$"
+}
+
+quarantine_stale_bundle() {
+  local bundle="$1"
+
+  if [[ ! -d "$bundle" || "$bundle" == "$INSTALLED_APP_BUNDLE" ]]; then
+    return
+  fi
+
+  create_quarantine_directory
+  unregister_bundle_from_launch_services "$bundle"
+
+  local destination="$QUARANTINE_DIR/${QUARANTINE_RUN_ID}-${QUARANTINED_COUNT}-$(basename "$bundle").quarantined"
+  /bin/mv "$bundle" "$destination"
+  unregister_bundle_from_launch_services "$destination"
+  QUARANTINED_COUNT=$((QUARANTINED_COUNT + 1))
+  echo "info: quarantined stale app bundle: $bundle"
+}
+
+unregister_stale_bundles_under() {
+  local root="$1"
+  local bundle
+
+  if [[ ! -d "$root" ]]; then
+    return
+  fi
+
+  while IFS= read -r -d '' bundle; do
+    quarantine_stale_bundle "$bundle"
+  done < <(
+    find "$root" -type d \( -name "$APP_NAME.app" -o -name "Codex Bar.app" \) -prune -print0
+  )
+}
+
+unregister_stale_local_bundles() {
+  unregister_stale_bundles_under "$ROOT_DIR/.build"
+  unregister_stale_bundles_under "$ROOT_DIR/output"
+  unregister_stale_bundles_under "$ROOT_DIR/src-tauri/target"
+
+  local xcode_derived_data="$USER_HOME/Library/Developer/Xcode/DerivedData"
+  if [[ -n "$USER_HOME" && -d "$xcode_derived_data" ]]; then
+    unregister_stale_bundles_under "$xcode_derived_data"
+  fi
+
+  unregister_bundle_from_launch_services "$LEGACY_APP_BUNDLE"
+
+  if [[ "$QUARANTINED_COUNT" -gt 0 && -x "$LAUNCH_SERVICES_REGISTER" ]]; then
+    "$LAUNCH_SERVICES_REGISTER" -gc >/dev/null 2>&1 || true
+  fi
+}
+
+register_installed_bundle() {
+  if [[ -x "$LAUNCH_SERVICES_REGISTER" && -d "$INSTALLED_APP_BUNDLE" ]]; then
+    "$LAUNCH_SERVICES_REGISTER" -f "$INSTALLED_APP_BUNDLE" >/dev/null 2>&1 || true
+  fi
+}
+
 install_app() {
   local staging_bundle="/Applications/.${APP_NAME}.install-$$.app"
   local signing_identity_hash
@@ -138,19 +221,14 @@ install_app() {
   /bin/mv "$staging_bundle" "$INSTALLED_APP_BUNDLE"
 
   if [[ "$LEGACY_APP_BUNDLE" != "$INSTALLED_APP_BUNDLE" && -d "$LEGACY_APP_BUNDLE" ]]; then
+    unregister_bundle_from_launch_services "$LEGACY_APP_BUNDLE"
     rm -rf "$LEGACY_APP_BUNDLE"
   fi
 }
 
 install_app
-
-unregister_build_bundle() {
-  if [[ -x "$LAUNCH_SERVICES_REGISTER" && -d "$APP_BUNDLE" ]]; then
-    "$LAUNCH_SERVICES_REGISTER" -u "$APP_BUNDLE" >/dev/null 2>&1 || true
-  fi
-}
-
-unregister_build_bundle
+unregister_stale_local_bundles
+register_installed_bundle
 
 open_app() {
   /usr/bin/open "$INSTALLED_APP_BUNDLE"

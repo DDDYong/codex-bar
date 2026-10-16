@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct CodexBarIcon: View {
@@ -56,6 +57,7 @@ private struct ProviderMenuBarIcon: View {
             }
         })
     }()
+
 }
 
 enum MenuBarStatusIconComposer {
@@ -88,6 +90,7 @@ enum MenuBarStatusIconComposer {
 @main
 struct CodexBarApp: App {
     @StateObject private var appState: AppState
+    @StateObject private var menuBarController: MenuBarController
 
     init() {
         let ccSwitchSource = CCSwitchConfigSource()
@@ -121,6 +124,14 @@ struct CodexBarApp: App {
             launchAtLoginManager: LaunchAtLoginManagerFactory.make()
         )
         _appState = StateObject(wrappedValue: state)
+        let menuBarController = MenuBarController(
+            appState: state,
+            isEnabled: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+        )
+        _menuBarController = StateObject(wrappedValue: menuBarController)
+        DispatchQueue.main.async {
+            menuBarController.start()
+        }
         // The test bundle is hosted inside this app target. Starting the real
         // polling loop there would read the user's Keychain during XCTest.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
@@ -129,17 +140,6 @@ struct CodexBarApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarContent()
-                .environmentObject(appState)
-        } label: {
-            MenuBarLabel(
-                item: appState.menuBarProviderItem,
-                layoutItems: appState.menuBarProviderItems
-            )
-        }
-        .menuBarExtraStyle(.window)
-
         Window("Codex Dashboard", id: AppConfiguration.dashboardWindowID) {
             DashboardShellView()
                 .environmentObject(appState)
@@ -155,9 +155,171 @@ struct CodexBarApp: App {
     }
 }
 
+@MainActor
+private final class MenuBarController: NSObject, ObservableObject {
+    private let appState: AppState
+    private let isEnabled: Bool
+    private var statusItem: NSStatusItem?
+    private var statusView: MenuBarStatusItemView?
+    private let popover = NSPopover()
+    private var dashboardWindowController: DashboardWindowController?
+    private var stateCancellable: AnyCancellable?
+
+    init(appState: AppState, isEnabled: Bool) {
+        self.appState = appState
+        self.isEnabled = isEnabled
+        super.init()
+    }
+
+    func start() {
+        guard isEnabled, statusItem == nil else { return }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let view = MenuBarStatusItemView(rootView: MenuBarStatusLabel(appState: appState))
+        statusItem = item
+        statusView = view
+        if let button = item.button {
+            button.title = ""
+            button.image = nil
+            button.isBordered = false
+            button.addSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                view.topAnchor.constraint(equalTo: button.topAnchor),
+                view.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+            ])
+        }
+
+        guard let statusView else { return }
+        statusView.onClick = { [weak self] in
+            self?.togglePopover()
+        }
+
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentViewController = NSHostingController(
+            rootView: MenuBarPopoverRoot(
+                appState: appState,
+                onOpenDashboard: { [weak self] in self?.openDashboard() },
+                onDismiss: { [weak self] in self?.closePopover() }
+            )
+        )
+        popover.contentSize = NSSize(
+            width: MenuBarPanelLayout.width,
+            height: MenuBarPanelLayout.initialHeight
+        )
+
+        stateCancellable = appState.objectWillChange
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.updateStatusItemSize()
+                }
+            }
+        updateStatusItemSize()
+    }
+
+    private func updateStatusItemSize() {
+        guard let statusItem, let statusView else { return }
+        statusView.invalidateIntrinsicContentSize()
+        let width = max(24, ceil(statusView.fittingSize.width))
+        let height = NSStatusBar.system.thickness
+        statusView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        statusItem.length = width
+    }
+
+    private func togglePopover() {
+        guard let statusView else { return }
+        if popover.isShown {
+            closePopover()
+        } else {
+            popover.show(
+                relativeTo: statusView.bounds,
+                of: statusView,
+                preferredEdge: .minY
+            )
+        }
+    }
+
+    private func closePopover() {
+        popover.performClose(nil)
+    }
+
+    private func openDashboard() {
+        closePopover()
+        appState.selectedRoute = .dashboard
+        if dashboardWindowController == nil {
+            dashboardWindowController = DashboardWindowController(appState: appState)
+        }
+        dashboardWindowController?.showDashboard()
+    }
+}
+
+@MainActor
+private final class DashboardWindowController: NSWindowController {
+    init(appState: AppState) {
+        let window = NSWindow(
+            contentRect: NSRect(
+                origin: .zero,
+                size: AppConfiguration.defaultWindowSize
+            ),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.identifier = NSUserInterfaceItemIdentifier(AppConfiguration.dashboardWindowID)
+        window.title = "Codex Dashboard"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.contentMinSize = AppConfiguration.minimumWindowSize
+        window.center()
+        window.contentViewController = NSHostingController(
+            rootView: DashboardWindowRoot(appState: appState)
+        )
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func showDashboard() {
+        guard let window else { return }
+        showWindow(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
+private struct DashboardWindowRoot: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        DashboardShellView()
+            .environmentObject(appState)
+            .preferredColorScheme(appState.theme.colorScheme)
+    }
+}
+
+private struct MenuBarPopoverRoot: View {
+    @ObservedObject var appState: AppState
+    let onOpenDashboard: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        MenuBarContent()
+            .environmentObject(appState)
+            .environment(\.menuBarOpenDashboard, onOpenDashboard)
+            .environment(\.menuBarDismiss, onDismiss)
+            .preferredColorScheme(appState.theme.colorScheme)
+    }
+}
+
 private struct MenuBarContent: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.menuBarOpenDashboard) private var openDashboard
     @EnvironmentObject private var appState: AppState
     @State private var measuredContentHeight = MenuBarPanelLayout.initialHeight
 
@@ -210,22 +372,18 @@ private struct MenuBarContent: View {
 
             MenuBarPanelButton(title: "打开仪表盘") {
                 appState.selectedRoute = .dashboard
-                openWindow(id: AppConfiguration.dashboardWindowID)
-                DispatchQueue.main.async {
-                    appState.selectedRoute = .dashboard
-                    NSApplication.shared.activate(ignoringOtherApps: true)
-                    let dashboardWindow = NSApplication.shared.windows.first {
-                        $0.identifier?.rawValue == AppConfiguration.dashboardWindowID || $0.title == "Codex Dashboard"
-                    }
-                    dashboardWindow?.makeKeyAndOrderFront(nil)
-                }
+                openDashboard()
             }
 
             MenuBarPanelButton(title: "立即刷新", isEnabled: !appState.isRefreshing) {
                 appState.refresh()
             }
 
-            MenuBarDisplayModeRow(selection: $appState.displayMode)
+            MenuBarDisplayModeRow(
+                selection: $appState.displayMode,
+                lineMode: $appState.menuBarLineMode,
+                textAlignment: $appState.menuBarTextAlignment
+            )
 
             MenuBarPanelStatusRow(text: "会话状态：\(activityLabel(appState.sessionActivity))")
 
@@ -313,6 +471,26 @@ private struct MenuBarContent: View {
 
 }
 
+private struct MenuBarOpenDashboardKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+
+private struct MenuBarDismissKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+
+private extension EnvironmentValues {
+    var menuBarOpenDashboard: () -> Void {
+        get { self[MenuBarOpenDashboardKey.self] }
+        set { self[MenuBarOpenDashboardKey.self] = newValue }
+    }
+
+    var menuBarDismiss: () -> Void {
+        get { self[MenuBarDismissKey.self] }
+        set { self[MenuBarDismissKey.self] = newValue }
+    }
+}
+
 private struct SectionHeader: View {
     let icon: String
     let title: String
@@ -386,6 +564,7 @@ private struct MenuBarPanelDivider: View {
 
 private struct MenuBarPanelButton: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.menuBarDismiss) private var menuBarDismiss
     let title: String
     var isEnabled = true
     var shortcutLabel: String?
@@ -406,6 +585,7 @@ private struct MenuBarPanelButton: View {
     private var rowButton: some View {
         Button {
             dismiss()
+            menuBarDismiss()
             action()
         } label: {
             MenuBarPanelRowLabel(title: title, shortcutLabel: shortcutLabel)
@@ -425,6 +605,8 @@ private struct MenuBarPanelButton: View {
 
 private struct MenuBarDisplayModeRow: View {
     @Binding var selection: MenuBarDisplayMode
+    @Binding var lineMode: MenuBarLineMode
+    @Binding var textAlignment: MenuBarTextAlignment
     @State private var isHovering = false
     @State private var isShowingOptions = false
 
@@ -446,6 +628,8 @@ private struct MenuBarDisplayModeRow: View {
         .popover(isPresented: $isShowingOptions, arrowEdge: .trailing) {
             MenuBarDisplayModeOptions(
                 selection: $selection,
+                lineMode: $lineMode,
+                textAlignment: $textAlignment,
                 isPresented: $isShowingOptions
             )
         }
@@ -454,16 +638,42 @@ private struct MenuBarDisplayModeRow: View {
 
 private struct MenuBarDisplayModeOptions: View {
     @Binding var selection: MenuBarDisplayMode
+    @Binding var lineMode: MenuBarLineMode
+    @Binding var textAlignment: MenuBarTextAlignment
     @Binding var isPresented: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(MenuBarDisplayMode.allCases) { mode in
-                MenuBarDisplayModeOptionRow(
+                MenuBarOptionRow(
                     title: mode.title,
                     isSelected: selection == mode
                 ) {
                     selection = mode
+                    isPresented = false
+                }
+            }
+
+            MenuBarOptionDivider()
+
+            ForEach(MenuBarLineMode.allCases) { mode in
+                MenuBarOptionRow(
+                    title: mode.title,
+                    isSelected: lineMode == mode
+                ) {
+                    lineMode = mode
+                    isPresented = false
+                }
+            }
+
+            MenuBarOptionDivider()
+
+            ForEach(MenuBarTextAlignment.allCases) { alignment in
+                MenuBarOptionRow(
+                    title: alignment.title,
+                    isSelected: textAlignment == alignment
+                ) {
+                    textAlignment = alignment
                     isPresented = false
                 }
             }
@@ -473,7 +683,15 @@ private struct MenuBarDisplayModeOptions: View {
     }
 }
 
-private struct MenuBarDisplayModeOptionRow: View {
+private struct MenuBarOptionDivider: View {
+    var body: some View {
+        Divider()
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+    }
+}
+
+private struct MenuBarOptionRow: View {
     let title: String
     let isSelected: Bool
     let action: () -> Void
@@ -509,6 +727,7 @@ private struct MenuBarDisplayModeOptionRow: View {
 
 private struct MenuBarPanelToggleRow: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.menuBarDismiss) private var menuBarDismiss
     let title: String
     @Binding var isOn: Bool
     @State private var isHovering = false
@@ -517,6 +736,7 @@ private struct MenuBarPanelToggleRow: View {
         Button {
             isOn.toggle()
             dismiss()
+            menuBarDismiss()
         } label: {
             MenuBarPanelRowLabel(
                 title: title,
@@ -643,32 +863,101 @@ enum MenuBarStamp {
     }()
 }
 
+private struct MenuBarStatusLabel: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        MenuBarLabel(
+            item: appState.menuBarProviderItem,
+            layoutItems: appState.menuBarProviderItems,
+            lineMode: appState.menuBarLineMode,
+            textAlignment: appState.menuBarTextAlignment
+        )
+        .frame(height: 22)
+        .padding(.horizontal, 2)
+    }
+}
+
+private final class MenuBarStatusItemView: NSHostingView<MenuBarStatusLabel> {
+    var onClick: (() -> Void)?
+
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width, height: NSStatusBar.system.thickness)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+}
+
 private struct MenuBarLabel: View {
     let item: MenuBarProviderItem
     let layoutItems: [MenuBarProviderItem]
+    let lineMode: MenuBarLineMode
+    let textAlignment: MenuBarTextAlignment
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            ForEach(Array(layoutItems.enumerated()), id: \.offset) { _, candidate in
-                providerLabel(candidate)
-                    .opacity(candidate.providerType == item.providerType ? 1 : 0)
-                    .accessibilityHidden(candidate.providerType != item.providerType)
+        HStack(spacing: 4) {
+            ProviderMenuBarIcon(
+                providerType: item.providerType,
+                activity: item.activity
+            )
+            if !item.lines.isEmpty {
+                ZStack(alignment: stackAlignment) {
+                    ForEach(Array(layoutItems.enumerated()), id: \.offset) { _, candidate in
+                        providerText(candidate)
+                            .opacity(candidate.providerType == item.providerType ? 1 : 0)
+                            .accessibilityHidden(candidate.providerType != item.providerType)
+                    }
+                }
+                .fixedSize()
             }
         }
         .fixedSize()
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Codex Bar，\(item.providerType.displayName)，\(item.title)，\(activityLabel(item.activity))")
+        .accessibilityLabel(
+            "Codex Bar，\(item.providerType.displayName)，\(item.title.isEmpty ? "仅图标" : item.title)，\(activityLabel(item.activity))"
+        )
     }
 
-    private func providerLabel(_ candidate: MenuBarProviderItem) -> some View {
-        HStack(spacing: 4) {
-            ProviderMenuBarIcon(
-                providerType: candidate.providerType,
-                activity: candidate.activity
-            )
-            if !candidate.title.isEmpty {
-                Text(candidate.title)
+    @ViewBuilder
+    private func providerText(_ candidate: MenuBarProviderItem) -> some View {
+        switch lineMode {
+        case .singleLine:
+            Text(candidate.title)
+                .lineLimit(1)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.white)
+        case .multiLine:
+            VStack(alignment: textColumnAlignment, spacing: -3) {
+                ForEach(Array(candidate.lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .lineLimit(1)
+                        .foregroundStyle(Color.white)
+                }
             }
+            .font(.system(size: 11))
+        }
+    }
+
+    private var stackAlignment: Alignment {
+        switch textAlignment {
+        case .leading: .leading
+        case .center: .center
+        case .trailing: .trailing
+        }
+    }
+
+    private var textColumnAlignment: HorizontalAlignment {
+        switch textAlignment {
+        case .leading: .leading
+        case .center: .center
+        case .trailing: .trailing
         }
     }
 

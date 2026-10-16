@@ -6,6 +6,10 @@ import XCTest
 final class CodexBarTests: XCTestCase {
     func testMenuBarStatusIndicatorHasNoOpaqueBackingRing() throws {
         let source = NSImage(size: NSSize(width: 20, height: 20))
+        source.lockFocus()
+        NSGraphicsContext.current?.compositingOperation = .clear
+        NSBezierPath(rect: NSRect(origin: .zero, size: source.size)).fill()
+        source.unlockFocus()
         let image = MenuBarStatusIconComposer.composedImage(from: source, activity: .running)
         let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
 
@@ -14,11 +18,31 @@ final class CodexBarTests: XCTestCase {
                 representation.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
             }
         }.filter { $0.alphaComponent > 0.25 }
-
         XCTAssertFalse(visibleColors.isEmpty)
         XCTAssertTrue(visibleColors.allSatisfy { color in
             color.greenComponent > color.redComponent * 1.2
                 && color.greenComponent > color.blueComponent * 1.2
+        })
+    }
+
+    func testMenuBarStatusIconPreservesSourceColor() throws {
+        let source = NSImage(size: NSSize(width: 20, height: 20))
+        source.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSBezierPath(rect: NSRect(x: 3, y: 3, width: 12, height: 12)).fill()
+        source.unlockFocus()
+
+        let image = MenuBarStatusIconComposer.composedImage(from: source, activity: .completed)
+        let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let visibleColors = (0..<representation.pixelsHigh).flatMap { y in
+            (0..<representation.pixelsWide).compactMap { x in
+                representation.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+            }
+        }.filter { $0.alphaComponent > 0.25 }
+
+        XCTAssertTrue(visibleColors.contains { color in
+            color.blueComponent > color.redComponent * 1.2
+                && color.blueComponent > color.greenComponent * 1.2
         })
     }
 
@@ -419,9 +443,15 @@ final class CodexBarTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 0)
         )
 
-        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "5h -- · -- · Week 68% · -- · 2 Resets")
+        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "5h -- · -- · W 68% · -- · 2 Resets")
+        XCTAssertEqual(
+            MenuBarPresentation.lines(for: .detailed, snapshot: snapshot),
+            ["5h -- · --", "W 68% · -- · 2 Resets"]
+        )
         XCTAssertEqual(MenuBarPresentation.title(for: .compact, snapshot: snapshot), "5h -- · W 68%")
+        XCTAssertEqual(MenuBarPresentation.lines(for: .compact, snapshot: snapshot), ["5h --", "W 68%"])
         XCTAssertEqual(MenuBarPresentation.title(for: .iconOnly, snapshot: snapshot), "")
+        XCTAssertEqual(MenuBarPresentation.lines(for: .iconOnly, snapshot: snapshot), [])
     }
 
     func testMenuBarPlacesFiveHourUsageBeforeWeeklyUsage() {
@@ -443,7 +473,11 @@ final class CodexBarTests: XCTestCase {
 
         XCTAssertEqual(
             MenuBarPresentation.title(for: .detailed, snapshot: snapshot),
-            "5h 82% · Sun · Week 100% · Sun · 1 Reset"
+            "5h 82% · Sun · W 100% · Sun · 1 Reset"
+        )
+        XCTAssertEqual(
+            MenuBarPresentation.lines(for: .detailed, snapshot: snapshot),
+            ["5h 82% · Sun", "W 100% · Sun · 1 Reset"]
         )
         XCTAssertEqual(MenuBarPresentation.title(for: .compact, snapshot: snapshot), "5h 82% · W 100%")
         XCTAssertEqual(MenuBarPresentation.dropdownSummary(snapshot), "Week 100% · Sunday · 1 Reset")
@@ -501,7 +535,7 @@ final class CodexBarTests: XCTestCase {
         )
 
         XCTAssertEqual(MenuBarPresentation.summary(snapshot), "Week 97% · -- · --")
-        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "5h -- · -- · Week 97% · -- · --")
+        XCTAssertEqual(MenuBarPresentation.title(for: .detailed, snapshot: snapshot), "5h -- · -- · W 97% · -- · --")
     }
 
     func testResetCacheUsesOnlyFreshValuesAndFiltersExpiredGrants() {
@@ -630,9 +664,11 @@ final class CodexBarTests: XCTestCase {
     }
 
     func testMenuBarDisplayModesExplainThirdPartyContent() {
-        XCTAssertEqual(MenuBarDisplayMode.detailed.thirdPartySummary, "图标 + 可用/预算/配额 + Provider 可核验明细")
-        XCTAssertEqual(MenuBarDisplayMode.compact.thirdPartySummary, "图标 + 可用余额、Key 预算或配额")
+        XCTAssertEqual(MenuBarDisplayMode.detailed.thirdPartySummary, "图标 + 两行主指标/辅助指标，展开后查看 Provider 明细")
+        XCTAssertEqual(MenuBarDisplayMode.compact.thirdPartySummary, "图标 + 两行核心指标")
         XCTAssertEqual(MenuBarDisplayMode.iconOnly.thirdPartySummary, "仅显示图标")
+        XCTAssertEqual(MenuBarLineMode.allCases.map(\.title), ["单行", "多行"])
+        XCTAssertEqual(MenuBarTextAlignment.allCases.map(\.title), ["左对齐", "居中对齐", "右对齐"])
     }
 
     func testMenuBarProviderItemsKeepProviderIconAndTitlePaired() {
@@ -661,8 +697,11 @@ final class CodexBarTests: XCTestCase {
         )
 
         XCTAssertEqual(items, [
-            MenuBarProviderItem(providerType: .officialCodex, title: "5h -- · -- · Week 68% · -- · 2 Resets"),
-            MenuBarProviderItem(providerType: .deepseek, title: "¥11.61 · 充值¥11.61 · 赠送¥0.00")
+            MenuBarProviderItem(
+                providerType: .officialCodex,
+                lines: ["5h -- · --", "W 68% · -- · 2 Resets"]
+            ),
+            MenuBarProviderItem(providerType: .deepseek, lines: ["¥11.61"])
         ])
     }
 
@@ -738,7 +777,7 @@ final class CodexBarTests: XCTestCase {
             isRefreshingDeepSeek: true
         )
 
-        XCTAssertEqual(items[0], MenuBarProviderItem(providerType: .officialCodex, title: "5h -- · W 99%"))
+        XCTAssertEqual(items[0], MenuBarProviderItem(providerType: .officialCodex, lines: ["5h --", "W 99%"]))
         XCTAssertEqual(items[1], MenuBarProviderItem(providerType: .deepseek, title: "指标查询中"))
     }
 
@@ -1356,7 +1395,8 @@ final class CodexBarTests: XCTestCase {
             refreshingProviderIDs: []
         )
         XCTAssertEqual(items[1].providerType, .custom("GLM"))
-        XCTAssertEqual(items[1].title, "GLM：GLM-5.3-Flash · 已连接")
+        XCTAssertEqual(items[1].lines, ["GLM-5.3-Flash", "已连接"])
+        XCTAssertEqual(items[1].title, "GLM-5.3-Flash · 已连接")
     }
 
     @MainActor
@@ -1420,7 +1460,7 @@ final class CodexBarTests: XCTestCase {
             refreshingProviderIDs: []
         )
 
-        XCTAssertEqual(items, [MenuBarProviderItem(providerType: .officialCodex, title: "5h -- · -- · Week -- · -- · --")])
+        XCTAssertEqual(items, [MenuBarProviderItem(providerType: .officialCodex, lines: ["5h -- · --", "W -- · -- · --"])])
     }
 
     func testDeepSeekMenuBarHidesUnsupportedPlaceholdersWhenOnlyBalanceIsAvailable() {
@@ -1483,6 +1523,11 @@ final class CodexBarTests: XCTestCase {
             "DeepSeek: Today ¥3.33 · Tokens 102.65M",
             "Avail ¥6.84 · Used ¥13.16 · Total ¥20.00"
         ])
+        XCTAssertEqual(
+            MenuBarPresentation.thirdPartyLines(for: .detailed, snapshot: snapshot),
+            ["¥6.84", "¥3.33"]
+        )
+        XCTAssertFalse(MenuBarPresentation.thirdPartyTitle(for: .detailed, snapshot: snapshot).contains("Today"))
 
         XCTAssertEqual(
             DashboardProviderPresentation.deepSeekUsageSummary(snapshot),
@@ -2475,7 +2520,9 @@ final class CodexBarTests: XCTestCase {
             .appendingPathComponent("usage-snapshots.json")
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
         let store = SnapshotStore(fileURL: fileURL)
-        let capturedAt = Date(timeIntervalSince1970: 1_783_000_000)
+        let capturedAt = Date(
+            timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 120
+        )
         let first = snapshotRecord(capturedAt: capturedAt, weekly: 70, short: 90)
         let changedShortWindow = snapshotRecord(capturedAt: capturedAt.addingTimeInterval(60), weekly: 70, short: 89)
 
@@ -2613,7 +2660,9 @@ final class CodexBarTests: XCTestCase {
             snapshotRetentionDays: 30,
             sessionIndexEnabled: false,
             pluginSkillIndexEnabled: true,
-            tokenHeatmapPeriod: .threeMonths
+            tokenHeatmapPeriod: .threeMonths,
+            menuBarLineMode: .singleLine,
+            menuBarTextAlignment: .trailing
         )
 
         store.save(settings)
@@ -2685,6 +2734,25 @@ final class CodexBarTests: XCTestCase {
 
         XCTAssertTrue(state.enabledProviderIDs.isEmpty)
         XCTAssertEqual(source.configurationProbeCount, 0)
+    }
+
+    @MainActor
+    func testAppStateDefaultsAllProvidersToDisabledWithoutSavedSelection() {
+        let suiteName = "CodexBarTests.FirstLaunchAllProvidersDisabled.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settingsStore = SettingsStore(defaults: defaults)
+        let source = ConfigurationProbeCountingProviderMetricsSource(providerID: .miniMax)
+        let state = AppState(
+            settingsStore: settingsStore,
+            providerMetricsSources: [source]
+        )
+
+        XCTAssertTrue(state.enabledProviderIDs.isEmpty)
+        XCTAssertTrue(state.effectiveEnabledProviderIDs.isEmpty)
+        XCTAssertEqual(source.configurationProbeCount, 0)
+        XCTAssertEqual(settingsStore.load().enabledProviderIDs, [])
     }
 
     @MainActor

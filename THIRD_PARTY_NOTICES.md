@@ -2,6 +2,14 @@
 
 Codex Bar uses the following third-party software:
 
+## Codex (OpenAI) icon glyph
+
+The terminal `> _` glyph geometry is based on the Codex (OpenAI) icon published
+by [theSVG](https://thesvg.org/icon/codex-openai). The source page identifies
+the icon as MIT-licensed. Codex Bar keeps the existing cloud artwork, renders
+the menu bar cloud with the system label color, and preserves the terminal
+glyph as transparent negative space.
+
 ## SweetCookieKit
 
 Copyright (c) 2026 Peter Steinberger

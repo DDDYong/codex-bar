@@ -17,22 +17,88 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable {
 
     var thirdPartySummary: String {
         switch self {
-        case .detailed: "图标 + 可用/预算/配额 + Provider 可核验明细"
-        case .compact: "图标 + 可用余额、Key 预算或配额"
+        case .detailed: "图标 + 两行主指标/辅助指标，展开后查看 Provider 明细"
+        case .compact: "图标 + 两行核心指标"
         case .iconOnly: "仅显示图标"
+        }
+    }
+}
+
+enum MenuBarLineMode: String, CaseIterable, Identifiable, Codable {
+    case singleLine
+    case multiLine
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .singleLine: "单行"
+        case .multiLine: "多行"
+        }
+    }
+}
+
+enum MenuBarTextAlignment: String, CaseIterable, Identifiable, Codable {
+    case leading
+    case center
+    case trailing
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .leading: "左对齐"
+        case .center: "居中对齐"
+        case .trailing: "右对齐"
         }
     }
 }
 
 struct MenuBarProviderItem: Equatable {
     let providerType: ProviderType
-    let title: String
+    let primaryText: String
+    let secondaryText: String?
     let activity: SessionActivity
 
     init(providerType: ProviderType, title: String, activity: SessionActivity = .unknown) {
+        self.init(
+            providerType: providerType,
+            primaryText: title,
+            secondaryText: nil,
+            activity: activity
+        )
+    }
+
+    init(
+        providerType: ProviderType,
+        primaryText: String,
+        secondaryText: String? = nil,
+        activity: SessionActivity = .unknown
+    ) {
         self.providerType = providerType
-        self.title = title
+        self.primaryText = primaryText
+        self.secondaryText = secondaryText
         self.activity = activity
+    }
+
+    init(providerType: ProviderType, lines: [String], activity: SessionActivity = .unknown) {
+        let normalized = lines.filter { !$0.isEmpty }
+        self.init(
+            providerType: providerType,
+            primaryText: normalized.first ?? "",
+            secondaryText: normalized.dropFirst().first,
+            activity: activity
+        )
+    }
+
+    var lines: [String] {
+        [primaryText, secondaryText]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+    }
+
+    var title: String {
+        lines.joined(separator: " · ")
     }
 }
 
@@ -43,15 +109,30 @@ enum MenuBarPresentation {
         balance: ProviderBalance? = nil,
         isThirdParty: Bool = false
     ) -> String {
+        lines(
+            for: mode,
+            snapshot: snapshot,
+            balance: balance,
+            isThirdParty: isThirdParty
+        ).joined(separator: " · ")
+    }
+
+    static func lines(
+        for mode: MenuBarDisplayMode,
+        snapshot: CodexUsageSnapshot?,
+        balance: ProviderBalance? = nil,
+        isThirdParty: Bool = false
+    ) -> [String] {
         if isThirdParty, let balance {
-            return thirdPartyTitle(for: mode, balance: balance)
+            return thirdPartyLines(for: mode, balance: balance)
         }
         switch mode {
         case .detailed:
-            return [fiveHourTitle(snapshot), summary(snapshot)].joined(separator: " · ")
+            return [fiveHourTitle(snapshot), weeklyMenuBarTitle(snapshot)]
         case .compact:
-            return [fiveHourRemainingTitle(snapshot), weeklyRemainingTitle(snapshot)].joined(separator: " · ")
-        case .iconOnly: return ""
+            return [fiveHourRemainingTitle(snapshot), weeklyRemainingTitle(snapshot)]
+        case .iconOnly:
+            return []
         }
     }
 
@@ -107,24 +188,24 @@ enum MenuBarPresentation {
     ) -> [MenuBarProviderItem] {
         var items = [MenuBarProviderItem(
             providerType: .officialCodex,
-            title: title(for: mode, snapshot: snapshot),
+            lines: lines(for: mode, snapshot: snapshot),
             activity: activities.officialCodex
         )]
 
         for providerID in ProviderID.allCases where enabledProviderIDs.contains(providerID) {
-            let providerTitle: String
+            let providerLines: [String]
             if mode == .iconOnly {
-                providerTitle = ""
+                providerLines = []
             } else if let providerSnapshot = providerSnapshots[providerID] {
-                providerTitle = thirdPartyTitle(for: mode, snapshot: providerSnapshot)
+                providerLines = thirdPartyLines(for: mode, snapshot: providerSnapshot)
             } else if refreshingProviderIDs.contains(providerID) {
-                providerTitle = providerID.capabilities == [.accountBalance] ? "余额查询中" : "指标查询中"
+                providerLines = [providerID.capabilities == [.accountBalance] ? "余额查询中" : "指标查询中"]
             } else {
-                providerTitle = providerID.capabilities == [.accountBalance] ? "余额不可用" : "指标不可用"
+                providerLines = [providerID.capabilities == [.accountBalance] ? "余额不可用" : "指标不可用"]
             }
             items.append(MenuBarProviderItem(
                 providerType: providerID.providerType,
-                title: providerTitle,
+                lines: providerLines,
                 activity: activities.activity(for: providerID.providerType)
             ))
         }
@@ -141,46 +222,57 @@ enum MenuBarPresentation {
     }
 
     static func thirdPartyTitle(for mode: MenuBarDisplayMode, balance: ProviderBalance) -> String {
-        switch mode {
-        case .iconOnly: return ""
-        case .compact:
-            return "\(balance.currencySymbol)\(balance.formattedTotal)"
-        case .detailed:
-            return "\(balance.currencySymbol)\(balance.formattedTotal) · 充值\(balance.currencySymbol)\(balance.formattedToppedUp) · 赠送\(balance.currencySymbol)\(balance.formattedGranted)"
-        }
+        thirdPartyLines(for: mode, balance: balance).joined(separator: " · ")
     }
 
     static func thirdPartyTitle(for mode: MenuBarDisplayMode, snapshot: ProviderFinancialSnapshot) -> String {
-        guard mode != .iconOnly else { return "" }
-        if snapshot.providerID == .glm {
-            return GLMModelPresentation.menuTitle(for: snapshot.source)
-        }
-        let primary = snapshot.balance.map { $0.formatted($0.available) }
-            ?? snapshot.budget.map { formattedMoney($0.remaining, currency: $0.currency) }
-            ?? snapshot.quotaWindows.first.map { String(format: "%.0f%%", $0.remainingPercent) }
-            ?? snapshot.spending.first.map { formattedMoney($0.amount, currency: $0.currency) }
-            ?? "--"
-        guard mode == .detailed else { return primary }
+        thirdPartyLines(for: mode, snapshot: snapshot).joined(separator: " · ")
+    }
 
-        var details: [String] = [primary]
-        if let balance = snapshot.balance {
-            if let toppedUp = balance.toppedUp {
-                details.append("充值\(balance.formatted(toppedUp))")
-            }
-            if let granted = balance.granted {
-                details.append("赠送\(balance.formatted(granted))")
-            }
+    static func thirdPartyLines(for mode: MenuBarDisplayMode, balance: ProviderBalance) -> [String] {
+        guard mode != .iconOnly else { return [] }
+        return ["\(balance.currencySymbol)\(balance.formattedTotal)"]
+    }
+
+    static func thirdPartyLines(for mode: MenuBarDisplayMode, snapshot: ProviderFinancialSnapshot) -> [String] {
+        guard mode != .iconOnly else { return [] }
+        if snapshot.providerID == .glm {
+            return [
+                GLMModelPresentation.model,
+                GLMModelPresentation.connectionStatus(for: snapshot.source)
+            ]
         }
+        let primary = primaryLine(for: snapshot)
+
         if let today = snapshot.spending.first(where: { $0.period == .today }) {
-            details.append("今日\(formattedMoney(today.amount, currency: today.currency))")
+            return [primary, formattedMoney(today.amount, currency: today.currency)]
+        }
+        if let tokens = snapshot.tokens, tokens.period == .today {
+            return [primary, compactTokenCount(tokens.input + tokens.output)]
+        }
+        if let quota = snapshot.quotaWindows.first(where: { $0.resetsAt != nil }), let resetsAt = quota.resetsAt {
+            return [primary, "Reset \(quotaResetLabel(resetsAt))"]
+        }
+        if snapshot.balance != nil, let budget = snapshot.budget {
+            return [primary, "Key \(formattedMoney(budget.remaining, currency: budget.currency))"]
+        }
+        return [primary]
+    }
+
+    private static func primaryLine(for snapshot: ProviderFinancialSnapshot) -> String {
+        if let balance = snapshot.balance {
+            return balance.formatted(balance.available)
         }
         if let budget = snapshot.budget {
-            details.append("Key余\(formattedMoney(budget.remaining, currency: budget.currency))")
+            return "Key \(formattedMoney(budget.remaining, currency: budget.currency))"
         }
-        for quota in snapshot.quotaWindows.prefix(2) {
-            details.append("\(quota.name)余\(String(format: "%.0f%%", quota.remainingPercent))")
+        if let quota = snapshot.quotaWindows.first {
+            return "Quota \(String(format: "%.0f%%", quota.remainingPercent))"
         }
-        return details.joined(separator: " · ")
+        if let spending = snapshot.spending.first {
+            return formattedMoney(spending.amount, currency: spending.currency)
+        }
+        return "--"
     }
 
     static func providerDetailLines(
@@ -343,6 +435,14 @@ enum MenuBarPresentation {
         return "W \(percent)"
     }
 
+    static func weeklyMenuBarTitle(_ snapshot: CodexUsageSnapshot?) -> String {
+        guard let snapshot else { return "W -- · -- · --" }
+        let percent = snapshot.weeklyWindow.map { String(format: "%.0f%%", $0.remainingPercent) } ?? "--"
+        let reset = snapshot.weeklyWindow?.resetsAt.map(resetLabel) ?? "--"
+        let credits = resetCreditLabel(snapshot.resetCredits.availableCount)
+        return "W \(percent) · \(reset) · \(credits)"
+    }
+
     static func fiveHourDropdownLine(
         _ snapshot: CodexUsageSnapshot?,
         formattedExpiry: (String) -> String = { $0 }
@@ -389,9 +489,18 @@ enum MenuBarPresentation {
     private static func resetLabel(_ value: String) -> String {
         let parser = ISO8601DateFormatter()
         guard let date = fractional.date(from: value) ?? parser.date(from: value) else { return "--" }
+        return resetLabel(for: date)
+    }
+
+    private static func quotaResetLabel(_ date: Date) -> String {
+        resetLabel(for: date)
+    }
+
+    private static func resetLabel(for date: Date) -> String {
         let secondsUntil = date.timeIntervalSinceNow
         if secondsUntil > 0, secondsUntil < 86_400 {
             let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "HH:mm"
             return formatter.string(from: date)
         }
