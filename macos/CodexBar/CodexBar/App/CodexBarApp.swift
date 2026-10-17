@@ -262,6 +262,24 @@ enum MenuBarStatusItemLayout {
     static let trailingPadding: CGFloat = 4
 }
 
+final class MenuBarStatusButtonCell: NSButtonCell {
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var titleRect = super.titleRect(forBounds: rect)
+        guard image != nil,
+              imagePosition == .imageLeft,
+              titleRect.width > 0 else {
+            return titleRect
+        }
+
+        let imageRect = super.imageRect(forBounds: rect)
+        let currentGap = titleRect.minX - imageRect.maxX
+        let adjustment = MenuBarStatusItemLayout.imageTitleGap - currentGap
+        titleRect.origin.x += adjustment
+        titleRect.size.width = max(0, titleRect.width - adjustment)
+        return titleRect
+    }
+}
+
 final class CodexBarApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
@@ -354,6 +372,7 @@ private final class MenuBarController: NSObject, ObservableObject {
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = item.button else { return }
+        button.cell = MenuBarStatusButtonCell(textCell: "")
         statusItem = item
         statusButton = button
         button.title = ""

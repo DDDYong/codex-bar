@@ -113,6 +113,22 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(MenuBarStatusItemLayout.imageTitleGap, 0.5)
     }
 
+    func testMenuBarButtonCellUsesTheConfiguredImageTitleGap() {
+        let cell = MenuBarStatusButtonCell(textCell: "5h 98%")
+        cell.image = NSImage(size: NSSize(width: 20, height: 20))
+        cell.imagePosition = .imageLeft
+
+        let bounds = NSRect(x: 0, y: 0, width: 160, height: 24)
+        let imageRect = cell.imageRect(forBounds: bounds)
+        let titleRect = cell.titleRect(forBounds: bounds)
+
+        XCTAssertEqual(
+            titleRect.minX - imageRect.maxX,
+            MenuBarStatusItemLayout.imageTitleGap,
+            accuracy: 0.001
+        )
+    }
+
     func testMenuBarStatusTitleUsesFixedOfficialLabelAndValueColumns() {
         let official = MenuBarProviderItem(
             providerType: .officialCodex,
