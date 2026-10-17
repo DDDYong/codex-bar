@@ -15,6 +15,7 @@ final class SessionActivitySource: SessionActivityReading {
     private let now: () -> Date
     private let liveEventWindow: TimeInterval
     private let terminalEventWindow: TimeInterval
+    private let hookStatusFile: URL
     private let cacheLock = NSLock()
     private var parseCache: [String: CachedActivity] = [:]
 
@@ -36,12 +37,15 @@ final class SessionActivitySource: SessionActivityReading {
         roots: [Root]? = nil,
         now: @escaping () -> Date = Date.init,
         liveEventWindow: TimeInterval = 180,
-        terminalEventWindow: TimeInterval = 15 * 60
+        terminalEventWindow: TimeInterval = 15 * 60,
+        hookStatusFile: URL? = nil
     ) {
         self.fileManager = fileManager
         self.now = now
         self.liveEventWindow = liveEventWindow
         self.terminalEventWindow = terminalEventWindow
+        self.hookStatusFile = hookStatusFile ?? fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex-bar/session-status.json", isDirectory: false)
 
         if let roots {
             self.roots = roots
@@ -73,8 +77,12 @@ final class SessionActivitySource: SessionActivityReading {
         }
         pruneCache(keeping: visitedPaths)
 
+        let hookActivity = hookFallbackActivity(observedAt: observedAt)
+        if hookActivity != .unknown {
+            statusesByProvider[.officialCodex, default: []].append(hookActivity)
+        }
         if statusesByProvider.isEmpty {
-            statusesByProvider[.officialCodex] = [hookFallbackActivity()]
+            statusesByProvider[.officialCodex] = [.unknown]
         }
 
         return ProviderActivitySnapshot(
@@ -281,13 +289,25 @@ final class SessionActivitySource: SessionActivityReading {
         keys.compactMap { object[$0] as? String }
     }
 
-    private func hookFallbackActivity() -> SessionActivity {
-        let file = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex-bar/session-status.json", isDirectory: false)
-        guard let data = try? Data(contentsOf: file),
+    private func hookFallbackActivity(observedAt: Date) -> SessionActivity {
+        guard let data = try? Data(contentsOf: hookStatusFile),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              root["sessions"] != nil,
-              let state = root["state"] as? String else { return .unknown }
-        return SessionActivity(rawValue: state) ?? .unknown
+              let sessions = root["sessions"] as? [String: Any] else { return .unknown }
+
+        let activities = sessions.values.compactMap { value -> SessionActivity? in
+            guard let session = value as? [String: Any],
+                  let state = session["state"] as? String,
+                  let activity = SessionActivity(rawValue: state),
+                  let updatedAt = (session["updated_at"] as? NSNumber)?.doubleValue else {
+                return nil
+            }
+
+            let age = observedAt.timeIntervalSince1970 - updatedAt
+            guard age >= -60, age <= terminalEventWindow else { return nil }
+            if activity == .running, age > liveEventWindow { return nil }
+            return activity
+        }
+
+        return SessionActivity.aggregate(activities)
     }
 }

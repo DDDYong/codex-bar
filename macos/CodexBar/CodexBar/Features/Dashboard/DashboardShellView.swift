@@ -126,14 +126,19 @@ private extension NSImage {
 }
 
 struct DashboardShellView: View {
+    let onClose: () -> Void
     @EnvironmentObject private var appState: AppState
+
+    init(onClose: @escaping () -> Void = {}) {
+        self.onClose = onClose
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             DashboardSidebar(selection: $appState.selectedRoute, theme: $appState.theme)
                 .frame(width: 220)
             VStack(spacing: 0) {
-                DashboardHeader(route: appState.selectedRoute)
+                DashboardHeader(route: appState.selectedRoute, onClose: onClose)
                 Group {
                     if appState.selectedRoute == .dashboard { DashboardHomeView() }
                     else if appState.selectedRoute == .usage { UsageContentView(route: appState.selectedRoute) }
@@ -1488,23 +1493,35 @@ private struct DashboardSidebar: View {
 
 private struct DashboardHeader: View {
     let route: DashboardRoute
+    let onClose: () -> Void
     @EnvironmentObject private var appState: AppState
+
+    private var accountGreeting: String {
+        guard let displayName = appState.account?.displayName else { return "你好 👋" }
+        return "你好，\(displayName) 👋"
+    }
+
+    private var accountPlan: String? {
+        appState.currentUsage?.plan
+            ?? appState.lastSuccessfulUsage?.plan
+            ?? appState.account?.plan
+    }
 
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("你好，端阳 👋")
+                Text(accountGreeting)
                     .font(.title3.weight(.semibold))
                 HStack(spacing: 6) {
+                    Text(accountPlan ?? "本机登录")
                     if !appState.configuredProviderIDs.isEmpty {
+                        Text("·")
                         ProviderIconHelper.iconView(for: .officialCodex, size: 14)
                         ForEach(appState.configuredProviderIDs) { providerID in
                             ProviderIconHelper.iconView(for: providerID.providerType, size: 14)
                         }
                         Text((["ChatGPT"] + appState.configuredProviderIDs.map(\.displayName)).joined(separator: " + "))
                             .lineLimit(1)
-                    } else {
-                        Text(appState.currentUsage?.plan ?? "本机登录")
                     }
                     Text("实时同步")
                         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -1516,9 +1533,7 @@ private struct DashboardHeader: View {
 
             Spacer()
 
-            headerButton(systemImage: "power", help: "退出 CodexBar", isSubtle: true) {
-                NSApplication.shared.terminate(nil)
-            }
+            headerButton(systemImage: "xmark", help: "关闭仪表盘", isSubtle: true, action: onClose)
             headerButton(systemImage: "arrow.clockwise", help: "立即刷新额度数据") {
                 appState.refresh()
             }

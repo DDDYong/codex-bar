@@ -30,7 +30,6 @@ enum TokenHeatmapPeriod: String, CaseIterable, Codable, Identifiable {
 struct AppSettings: Codable, Equatable {
     var displayMode: MenuBarDisplayMode
     var menuBarLineMode: MenuBarLineMode
-    var menuBarTextAlignment: MenuBarTextAlignment
     var theme: AppState.Theme
     var snapshotRetentionDays: Int
     var sessionIndexEnabled: Bool
@@ -52,12 +51,11 @@ struct AppSettings: Codable, Equatable {
         enabledProviderIDs: [],
         experimentalProvidersEnabled: false,
         deepSeekPlatformUsageEnabled: false,
-        menuBarLineMode: .multiLine,
-        menuBarTextAlignment: .leading
+        menuBarLineMode: .multiLine
     )
 
     private enum CodingKeys: String, CodingKey {
-        case displayMode, menuBarLineMode, menuBarTextAlignment, theme, snapshotRetentionDays, sessionIndexEnabled, pluginSkillIndexEnabled, tokenHeatmapPeriod, launchAtLoginRequested, enabledProviderIDs, experimentalProvidersEnabled, deepSeekPlatformUsageEnabled
+        case displayMode, menuBarLineMode, theme, snapshotRetentionDays, sessionIndexEnabled, pluginSkillIndexEnabled, tokenHeatmapPeriod, launchAtLoginRequested, enabledProviderIDs, experimentalProvidersEnabled, deepSeekPlatformUsageEnabled
     }
 
     init(
@@ -71,12 +69,10 @@ struct AppSettings: Codable, Equatable {
         enabledProviderIDs: Set<ProviderID>? = nil,
         experimentalProvidersEnabled: Bool = false,
         deepSeekPlatformUsageEnabled: Bool = false,
-        menuBarLineMode: MenuBarLineMode = .multiLine,
-        menuBarTextAlignment: MenuBarTextAlignment = .leading
+        menuBarLineMode: MenuBarLineMode = .multiLine
     ) {
         self.displayMode = displayMode
         self.menuBarLineMode = menuBarLineMode
-        self.menuBarTextAlignment = menuBarTextAlignment
         self.theme = theme
         self.snapshotRetentionDays = snapshotRetentionDays
         self.sessionIndexEnabled = sessionIndexEnabled
@@ -92,7 +88,6 @@ struct AppSettings: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         displayMode = try container.decode(MenuBarDisplayMode.self, forKey: .displayMode)
         menuBarLineMode = try container.decodeIfPresent(MenuBarLineMode.self, forKey: .menuBarLineMode) ?? .multiLine
-        menuBarTextAlignment = try container.decodeIfPresent(MenuBarTextAlignment.self, forKey: .menuBarTextAlignment) ?? .leading
         theme = try container.decode(AppState.Theme.self, forKey: .theme)
         snapshotRetentionDays = try container.decode(Int.self, forKey: .snapshotRetentionDays)
         sessionIndexEnabled = try container.decode(Bool.self, forKey: .sessionIndexEnabled)

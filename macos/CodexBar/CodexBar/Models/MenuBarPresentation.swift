@@ -38,22 +38,6 @@ enum MenuBarLineMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum MenuBarTextAlignment: String, CaseIterable, Identifiable, Codable {
-    case leading
-    case center
-    case trailing
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .leading: "左对齐"
-        case .center: "居中对齐"
-        case .trailing: "右对齐"
-        }
-    }
-}
-
 struct MenuBarProviderItem: Equatable {
     let providerType: ProviderType
     let primaryText: String
