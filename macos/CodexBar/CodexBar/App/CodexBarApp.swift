@@ -258,7 +258,8 @@ enum MenuBarStatusTitleLayout {
 }
 
 enum MenuBarStatusItemLayout {
-    static let imageTitleGap: CGFloat = 0.5
+    static let imageTitleGap: CGFloat = 1
+    static let multiLineTitleVerticalOffset: CGFloat = 2
     static let trailingPadding: CGFloat = 4
 }
 
@@ -276,7 +277,20 @@ final class MenuBarStatusButtonCell: NSButtonCell {
         let adjustment = MenuBarStatusItemLayout.imageTitleGap - currentGap
         titleRect.origin.x += adjustment
         titleRect.size.width = max(0, titleRect.width - adjustment)
+
         return titleRect
+    }
+
+    override func drawTitle(
+        _ title: NSAttributedString,
+        withFrame frame: NSRect,
+        in controlView: NSView
+    ) -> NSRect {
+        var adjustedFrame = frame
+        if title.string.contains("\n") {
+            adjustedFrame.origin.y += MenuBarStatusItemLayout.multiLineTitleVerticalOffset
+        }
+        return super.drawTitle(title, withFrame: adjustedFrame, in: controlView)
     }
 }
 
@@ -464,7 +478,7 @@ private final class MenuBarController: NSObject, ObservableObject {
                 .font: nativeStatusFont(for: lineMode),
                 .foregroundColor: NSColor.controlTextColor,
                 .paragraphStyle: paragraphStyle,
-                .baselineOffset: lineMode == .multiLine ? -5 : 0
+                .baselineOffset: 0
             ]
         )
     }

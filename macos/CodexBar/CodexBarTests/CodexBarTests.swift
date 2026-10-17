@@ -110,7 +110,7 @@ final class CodexBarTests: XCTestCase {
     }
 
     func testMenuBarUsesACompactImageTitleGap() {
-        XCTAssertEqual(MenuBarStatusItemLayout.imageTitleGap, 0.5)
+        XCTAssertEqual(MenuBarStatusItemLayout.imageTitleGap, 1)
     }
 
     func testMenuBarButtonCellUsesTheConfiguredImageTitleGap() {
