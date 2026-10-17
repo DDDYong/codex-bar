@@ -25,70 +25,252 @@ struct CodexBarIcon: View {
     }
 }
 
-private struct ProviderMenuBarIcon: View {
-    let providerType: ProviderType
-    let activity: SessionActivity
-
-    var body: some View {
-        if let image = Self.images[IconKey(providerType: providerType, activity: activity)] {
-            Image(nsImage: image)
-                .frame(width: 20, height: 20)
-        } else {
-            Image(systemName: "chart.pie")
-                .font(.system(size: 16, weight: .medium))
-        }
-    }
-
+private enum ProviderMenuBarIcon {
     private struct IconKey: Hashable {
         let providerType: ProviderType
-        let activity: SessionActivity
     }
 
     private static let images: [IconKey: NSImage] = {
         let providerTypes: [ProviderType] = [.officialCodex] + ProviderID.allCases.map(\.providerType)
-        let activities: [SessionActivity] = [.running, .waiting, .completed, .failed, .unknown]
-        return Dictionary(uniqueKeysWithValues: providerTypes.flatMap { providerType in
-            activities.compactMap { activity in
-                guard let source = ProviderIconHelper.icon(for: providerType) else { return nil }
-                return (
-                    IconKey(providerType: providerType, activity: activity),
-                    MenuBarStatusIconComposer.composedImage(from: source, activity: activity)
+        return Dictionary(uniqueKeysWithValues: providerTypes.compactMap { providerType -> (IconKey, NSImage)? in
+            guard let source = ProviderIconHelper.icon(for: providerType) else { return nil }
+            return (
+                IconKey(providerType: providerType),
+                MenuBarStatusIconComposer.composedImage(
+                    from: source,
+                    removesInternalCodexGlyph: providerType == .officialCodex
                 )
-            }
+            )
         })
     }()
 
+    static func image(for providerType: ProviderType) -> NSImage? {
+        images[IconKey(providerType: providerType)]
+    }
 }
 
 enum MenuBarStatusIconComposer {
-    static func composedImage(from source: NSImage, activity: SessionActivity) -> NSImage {
+    static func composedImage(
+        from source: NSImage,
+        removesInternalCodexGlyph: Bool = false
+    ) -> NSImage {
         let image = NSImage(size: NSSize(width: 20, height: 20))
+        let monochromeSource = monochromeImage(
+            from: source,
+            removesInternalCodexGlyph: removesInternalCodexGlyph
+        )
+        let bodySize: CGFloat = 18.5
         image.lockFocus()
-        source.draw(
-            in: NSRect(x: 0, y: 1, width: 18.5, height: 18.5),
+        monochromeSource.draw(
+            in: NSRect(
+                x: (image.size.width - bodySize) / 2,
+                y: (image.size.height - bodySize) / 2,
+                width: bodySize,
+                height: bodySize
+            ),
             from: .zero,
             operation: .sourceOver,
             fraction: 1
         )
-        let indicatorRect = NSRect(x: 13.5, y: 0, width: 6, height: 6)
-        statusColor(for: activity).setFill()
-        NSBezierPath(ovalIn: indicatorRect).fill()
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
+    }
+
+    private static func monochromeImage(
+        from source: NSImage,
+        removesInternalCodexGlyph: Bool
+    ) -> NSImage {
+        let image = NSImage(size: source.size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: source.size)).fill()
+        source.draw(
+            in: NSRect(origin: .zero, size: source.size),
+            from: .zero,
+            operation: .destinationIn,
+            fraction: 1
+        )
+        if removesInternalCodexGlyph {
+            clearInternalCodexGlyph(in: source.size)
+        }
         image.unlockFocus()
         return image
     }
 
-    private static func statusColor(for activity: SessionActivity) -> NSColor {
+    private static func clearInternalCodexGlyph(in size: NSSize) {
+        let scaleX = size.width / 20
+        let scaleY = size.height / 20
+        let point = { (x: CGFloat, y: CGFloat) in
+            NSPoint(x: x * scaleX, y: y * scaleY)
+        }
+
+        NSGraphicsContext.current?.compositingOperation = .clear
+
+        let chevron = NSBezierPath()
+        chevron.move(to: point(5.0, 13.4))
+        chevron.line(to: point(7.8, 10.0))
+        chevron.line(to: point(5.0, 6.6))
+        chevron.lineWidth = 2.2 * min(scaleX, scaleY)
+        chevron.lineCapStyle = .round
+        chevron.lineJoinStyle = .round
+        chevron.stroke()
+
+        let terminalRect = NSRect(
+            x: 9.4 * scaleX,
+            y: 6.6 * scaleY,
+            width: 5.6 * scaleX,
+            height: 2.5 * scaleY
+        )
+        NSBezierPath(
+            roundedRect: terminalRect,
+            xRadius: 1.25 * scaleX,
+            yRadius: 1.25 * scaleY
+        ).fill()
+    }
+}
+
+enum MenuBarStatusIndicatorPalette {
+    static func color(for activity: SessionActivity) -> NSColor? {
         switch activity.indicatorStyle {
         case .active: .systemGreen
         case .attention: .systemOrange
         case .failure: .systemRed
-        case .idle: .secondaryLabelColor
+        case .idle: nil
         }
+    }
+}
+
+enum MenuBarStatusIndicatorLayout {
+    static let diameter: CGFloat = 6
+    static let iconTrailingGap: CGFloat = 4
+
+    static func frame(for imageRect: NSRect) -> NSRect {
+        guard imageRect.width > 0, imageRect.height > 0 else { return .zero }
+
+        let scale = min(imageRect.width / 20, imageRect.height / 20)
+        let size = diameter * scale
+        let iconGap = max(0, iconTrailingGap) * scale
+        let centerX = imageRect.maxX + iconGap
+        return NSRect(
+            x: centerX - (size / 2),
+            y: imageRect.midY - (size / 2),
+            width: size,
+            height: size
+        )
+    }
+}
+
+final class MenuBarStatusIndicatorView: NSView {
+    var activity: SessionActivity = .unknown {
+        didSet {
+            isHidden = MenuBarStatusIndicatorPalette.color(for: activity) == nil
+            needsDisplay = true
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let color = MenuBarStatusIndicatorPalette.color(for: activity) else { return }
+        color.setFill()
+        NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5)).fill()
+    }
+}
+
+enum MenuBarPopoverClickPolicy {
+    static func shouldDismiss(isInsidePopover: Bool, isInsideStatusItem: Bool) -> Bool {
+        !isInsidePopover && !isInsideStatusItem
+    }
+}
+
+enum MenuBarStatusTitleLayout {
+    static let labelColumnWidth: CGFloat = 24
+    static let valueColumnStart: CGFloat = labelColumnWidth
+
+    static func title(for item: MenuBarProviderItem, lineMode: MenuBarLineMode) -> String {
+        guard lineMode == .multiLine,
+              item.providerType == .officialCodex else {
+            return lineMode == .singleLine
+                ? item.title
+                : item.lines.joined(separator: "\n")
+        }
+
+        return item.lines
+            .map(formatOfficialLine)
+            .joined(separator: "\n")
+    }
+
+    static func paragraphStyle(
+        for item: MenuBarProviderItem,
+        lineMode: MenuBarLineMode
+    ) -> NSMutableParagraphStyle {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .left
+        paragraphStyle.lineBreakMode = .byClipping
+
+        guard lineMode == .multiLine else { return paragraphStyle }
+
+        paragraphStyle.minimumLineHeight = 10
+        paragraphStyle.maximumLineHeight = 10
+        paragraphStyle.lineSpacing = 0
+
+        if item.providerType == .officialCodex {
+            paragraphStyle.tabStops = [
+                NSTextTab(
+                    textAlignment: .center,
+                    location: labelColumnWidth / 2
+                ),
+                NSTextTab(
+                    textAlignment: .left,
+                    location: valueColumnStart
+                )
+            ]
+        }
+
+        return paragraphStyle
+    }
+
+    private static func formatOfficialLine(_ line: String) -> String {
+        guard let separator = line.firstIndex(where: { $0 == " " || $0 == "\t" }) else {
+            return line
+        }
+
+        let label = String(line[..<separator])
+        guard label == "5h" || label == "W" else { return line }
+
+        let value = line[line.index(after: separator)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "\t\(label)" : "\t\(label)\t\(value)"
+    }
+}
+
+enum MenuBarStatusItemLayout {
+    static let imageTitleGap: CGFloat = 0.5
+    static let trailingPadding: CGFloat = 4
+}
+
+final class CodexBarApplicationDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }
 
 @main
 struct CodexBarApp: App {
+    @NSApplicationDelegateAdaptor(CodexBarApplicationDelegate.self) private var applicationDelegate
     @StateObject private var appState: AppState
     @StateObject private var menuBarController: MenuBarController
 
@@ -140,18 +322,12 @@ struct CodexBarApp: App {
     }
 
     var body: some Scene {
-        Window("Codex Dashboard", id: AppConfiguration.dashboardWindowID) {
-            DashboardShellView()
-                .environmentObject(appState)
-                .preferredColorScheme(appState.theme.colorScheme)
-                .task { appState.start() }
+        // The dashboard is owned by DashboardWindowController below. Keeping
+        // a second SwiftUI Window scene would create another dashboard window
+        // that becomes visible after the first one is closed.
+        Settings {
+            EmptyView()
         }
-        .defaultSize(
-            width: AppConfiguration.defaultWindowSize.width,
-            height: AppConfiguration.defaultWindowSize.height
-        )
-        .windowResizability(.contentMinSize)
-        .windowStyle(.hiddenTitleBar)
     }
 }
 
@@ -160,10 +336,12 @@ private final class MenuBarController: NSObject, ObservableObject {
     private let appState: AppState
     private let isEnabled: Bool
     private var statusItem: NSStatusItem?
-    private var statusView: MenuBarStatusItemView?
+    private weak var statusButton: NSStatusBarButton?
+    private var statusIndicatorView: MenuBarStatusIndicatorView?
     private let popover = NSPopover()
     private var dashboardWindowController: DashboardWindowController?
     private var stateCancellable: AnyCancellable?
+    private var outsideClickMonitors: [Any] = []
 
     init(appState: AppState, isEnabled: Bool) {
         self.appState = appState
@@ -175,30 +353,23 @@ private final class MenuBarController: NSObject, ObservableObject {
         guard isEnabled, statusItem == nil else { return }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let view = MenuBarStatusItemView(rootView: MenuBarStatusLabel(appState: appState))
+        guard let button = item.button else { return }
         statusItem = item
-        statusView = view
-        if let button = item.button {
-            button.title = ""
-            button.image = nil
-            button.isBordered = false
-            button.addSubview(view)
-            view.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                view.topAnchor.constraint(equalTo: button.topAnchor),
-                view.bottomAnchor.constraint(equalTo: button.bottomAnchor)
-            ])
-        }
-
-        guard let statusView else { return }
-        statusView.onClick = { [weak self] in
-            self?.togglePopover()
-        }
+        statusButton = button
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "")
+        button.image = nil
+        button.isBordered = false
+        button.focusRingType = .none
+        button.target = self
+        button.action = #selector(handleStatusItemClick(_:))
+        let indicatorView = MenuBarStatusIndicatorView(frame: .zero)
+        button.addSubview(indicatorView)
+        statusIndicatorView = indicatorView
 
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
         popover.contentViewController = NSHostingController(
             rootView: MenuBarPopoverRoot(
                 appState: appState,
@@ -221,29 +392,173 @@ private final class MenuBarController: NSObject, ObservableObject {
     }
 
     private func updateStatusItemSize() {
-        guard let statusItem, let statusView else { return }
-        statusView.invalidateIntrinsicContentSize()
-        let width = max(24, ceil(statusView.fittingSize.width))
-        let height = NSStatusBar.system.thickness
-        statusView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        guard let statusItem, let button = statusButton else { return }
+        let item = appState.menuBarProviderItem
+        let title = nativeStatusTitle(for: item)
+        let image = nativeStatusIcon(for: item)
+        let hasText = !title.string.isEmpty
+        let lineMode = appState.menuBarLineMode
+
+        button.attributedTitle = title
+        button.image = image
+        button.imagePosition = image == nil ? .noImage : (hasText ? .imageLeft : .imageOnly)
+        button.imageScaling = .scaleNone
+        button.imageHugsTitle = true
+
+        if let cell = button.cell {
+            cell.alignment = .left
+            cell.font = nativeStatusFont(for: lineMode)
+            cell.usesSingleLineMode = !hasText || lineMode == .singleLine
+            cell.wraps = hasText && lineMode == .multiLine
+            cell.isScrollable = false
+            cell.lineBreakMode = .byClipping
+        }
+
+        let bounds = title.boundingRect(
+            with: NSSize(width: 4096, height: 4096),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let textWidth = hasText ? ceil(bounds.width) : 0
+        let imageWidth = image == nil ? 0 : 20
+        let imageGap = image != nil && hasText ? MenuBarStatusItemLayout.imageTitleGap : 0
+        let width = max(
+            24,
+            ceil(textWidth + CGFloat(imageWidth) + imageGap + MenuBarStatusItemLayout.trailingPadding)
+        )
         statusItem.length = width
+        updateStatusIndicator(for: item.activity)
+    }
+
+    private func nativeStatusTitle(for item: MenuBarProviderItem) -> NSAttributedString {
+        guard !item.lines.isEmpty else { return NSAttributedString(string: "") }
+
+        let lineMode = appState.menuBarLineMode
+        let title = MenuBarStatusTitleLayout.title(for: item, lineMode: lineMode)
+        let paragraphStyle = MenuBarStatusTitleLayout.paragraphStyle(
+            for: item,
+            lineMode: lineMode
+        )
+
+        return NSAttributedString(
+            string: title,
+            attributes: [
+                .font: nativeStatusFont(for: lineMode),
+                .foregroundColor: NSColor.controlTextColor,
+                .paragraphStyle: paragraphStyle,
+                .baselineOffset: lineMode == .multiLine ? -5 : 0
+            ]
+        )
+    }
+
+    private func nativeStatusIcon(for item: MenuBarProviderItem) -> NSImage? {
+        let image = ProviderMenuBarIcon.image(
+            for: item.providerType
+        ) ?? NSImage(
+            systemSymbolName: "chart.pie",
+            accessibilityDescription: "Codex Bar"
+        )
+        image?.isTemplate = true
+        return image
+    }
+
+    private func updateStatusIndicator(for activity: SessionActivity) {
+        guard let indicatorView = statusIndicatorView else { return }
+        indicatorView.activity = activity
+        guard let button = statusButton,
+              let imageRect = button.cell?.imageRect(forBounds: button.bounds),
+              imageRect.width > 0,
+              imageRect.height > 0 else {
+            indicatorView.isHidden = true
+            return
+        }
+
+        indicatorView.frame = MenuBarStatusIndicatorLayout.frame(
+            for: imageRect
+        )
+    }
+
+    private func nativeStatusFont(for lineMode: MenuBarLineMode) -> NSFont {
+        NSFont.systemFont(ofSize: lineMode == .singleLine ? 13 : 11)
+    }
+
+    @objc private func handleStatusItemClick(_ sender: Any?) {
+        togglePopover()
     }
 
     private func togglePopover() {
-        guard let statusView else { return }
+        guard let statusButton else { return }
         if popover.isShown {
             closePopover()
         } else {
             popover.show(
-                relativeTo: statusView.bounds,
-                of: statusView,
+                relativeTo: statusButton.bounds,
+                of: statusButton,
                 preferredEdge: .minY
             )
+            beginOutsideClickMonitoring()
         }
     }
 
     private func closePopover() {
+        stopOutsideClickMonitoring()
         popover.performClose(nil)
+    }
+
+    private func beginOutsideClickMonitoring() {
+        guard outsideClickMonitors.isEmpty else { return }
+
+        let mouseDownEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown
+        ]
+        if let localMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: mouseDownEvents,
+            handler: { [weak self] event in
+                self?.dismissPopoverIfNeeded(for: event)
+                return event
+            }
+        ) {
+            outsideClickMonitors.append(localMonitor)
+        }
+        if let globalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: mouseDownEvents,
+            handler: { [weak self] event in
+                self?.dismissPopoverIfNeeded(for: event)
+            }
+        ) {
+            outsideClickMonitors.append(globalMonitor)
+        }
+    }
+
+    private func stopOutsideClickMonitoring() {
+        outsideClickMonitors.forEach(NSEvent.removeMonitor)
+        outsideClickMonitors.removeAll()
+    }
+
+    private func dismissPopoverIfNeeded(for event: NSEvent) {
+        guard popover.isShown else { return }
+
+        let location = screenLocation(for: event)
+        let isInsidePopover = popover.contentViewController?.view.window?.frame.contains(location) == true
+        let isInsideStatusItem = statusButton.flatMap(screenFrame(for:))?.contains(location) == true
+        guard MenuBarPopoverClickPolicy.shouldDismiss(
+            isInsidePopover: isInsidePopover,
+            isInsideStatusItem: isInsideStatusItem
+        ) else { return }
+
+        closePopover()
+    }
+
+    private func screenLocation(for event: NSEvent) -> NSPoint {
+        guard let window = event.window else { return NSEvent.mouseLocation }
+        let windowPoint = NSPoint(x: event.locationInWindow.x, y: event.locationInWindow.y)
+        return window.convertToScreen(NSRect(origin: windowPoint, size: .zero)).origin
+    }
+
+    private func screenFrame(for view: NSView) -> NSRect? {
+        guard let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
     }
 
     private func openDashboard() {
@@ -253,6 +568,12 @@ private final class MenuBarController: NSObject, ObservableObject {
             dashboardWindowController = DashboardWindowController(appState: appState)
         }
         dashboardWindowController?.showDashboard()
+    }
+}
+
+extension MenuBarController: NSPopoverDelegate {
+    func popoverDidClose(_ notification: Notification) {
+        stopOutsideClickMonitoring()
     }
 }
 
@@ -273,10 +594,15 @@ private final class DashboardWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
+        window.level = .normal
+        window.isReleasedWhenClosed = false
         window.contentMinSize = AppConfiguration.minimumWindowSize
         window.center()
         window.contentViewController = NSHostingController(
-            rootView: DashboardWindowRoot(appState: appState)
+            rootView: DashboardWindowRoot(
+                appState: appState,
+                onClose: { [weak window] in window?.performClose(nil) }
+            )
         )
         super.init(window: window)
     }
@@ -296,9 +622,10 @@ private final class DashboardWindowController: NSWindowController {
 
 private struct DashboardWindowRoot: View {
     @ObservedObject var appState: AppState
+    let onClose: () -> Void
 
     var body: some View {
-        DashboardShellView()
+        DashboardShellView(onClose: onClose)
             .environmentObject(appState)
             .preferredColorScheme(appState.theme.colorScheme)
     }
@@ -381,8 +708,7 @@ private struct MenuBarContent: View {
 
             MenuBarDisplayModeRow(
                 selection: $appState.displayMode,
-                lineMode: $appState.menuBarLineMode,
-                textAlignment: $appState.menuBarTextAlignment
+                lineMode: $appState.menuBarLineMode
             )
 
             MenuBarPanelStatusRow(text: "会话状态：\(activityLabel(appState.sessionActivity))")
@@ -606,7 +932,6 @@ private struct MenuBarPanelButton: View {
 private struct MenuBarDisplayModeRow: View {
     @Binding var selection: MenuBarDisplayMode
     @Binding var lineMode: MenuBarLineMode
-    @Binding var textAlignment: MenuBarTextAlignment
     @State private var isHovering = false
     @State private var isShowingOptions = false
 
@@ -629,7 +954,6 @@ private struct MenuBarDisplayModeRow: View {
             MenuBarDisplayModeOptions(
                 selection: $selection,
                 lineMode: $lineMode,
-                textAlignment: $textAlignment,
                 isPresented: $isShowingOptions
             )
         }
@@ -639,7 +963,6 @@ private struct MenuBarDisplayModeRow: View {
 private struct MenuBarDisplayModeOptions: View {
     @Binding var selection: MenuBarDisplayMode
     @Binding var lineMode: MenuBarLineMode
-    @Binding var textAlignment: MenuBarTextAlignment
     @Binding var isPresented: Bool
 
     var body: some View {
@@ -662,18 +985,6 @@ private struct MenuBarDisplayModeOptions: View {
                     isSelected: lineMode == mode
                 ) {
                     lineMode = mode
-                    isPresented = false
-                }
-            }
-
-            MenuBarOptionDivider()
-
-            ForEach(MenuBarTextAlignment.allCases) { alignment in
-                MenuBarOptionRow(
-                    title: alignment.title,
-                    isSelected: textAlignment == alignment
-                ) {
-                    textAlignment = alignment
                     isPresented = false
                 }
             }
@@ -861,113 +1172,4 @@ enum MenuBarStamp {
         formatter.dateFormat = "MM-dd HH:mm"
         return formatter
     }()
-}
-
-private struct MenuBarStatusLabel: View {
-    @ObservedObject var appState: AppState
-
-    var body: some View {
-        MenuBarLabel(
-            item: appState.menuBarProviderItem,
-            layoutItems: appState.menuBarProviderItems,
-            lineMode: appState.menuBarLineMode,
-            textAlignment: appState.menuBarTextAlignment
-        )
-        .frame(height: 22)
-        .padding(.horizontal, 2)
-    }
-}
-
-private final class MenuBarStatusItemView: NSHostingView<MenuBarStatusLabel> {
-    var onClick: (() -> Void)?
-
-    override var intrinsicContentSize: NSSize {
-        let size = super.intrinsicContentSize
-        return NSSize(width: size.width, height: NSStatusBar.system.thickness)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        onClick?()
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-}
-
-private struct MenuBarLabel: View {
-    let item: MenuBarProviderItem
-    let layoutItems: [MenuBarProviderItem]
-    let lineMode: MenuBarLineMode
-    let textAlignment: MenuBarTextAlignment
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ProviderMenuBarIcon(
-                providerType: item.providerType,
-                activity: item.activity
-            )
-            if !item.lines.isEmpty {
-                ZStack(alignment: stackAlignment) {
-                    ForEach(Array(layoutItems.enumerated()), id: \.offset) { _, candidate in
-                        providerText(candidate)
-                            .opacity(candidate.providerType == item.providerType ? 1 : 0)
-                            .accessibilityHidden(candidate.providerType != item.providerType)
-                    }
-                }
-                .fixedSize()
-            }
-        }
-        .fixedSize()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "Codex Bar，\(item.providerType.displayName)，\(item.title.isEmpty ? "仅图标" : item.title)，\(activityLabel(item.activity))"
-        )
-    }
-
-    @ViewBuilder
-    private func providerText(_ candidate: MenuBarProviderItem) -> some View {
-        switch lineMode {
-        case .singleLine:
-            Text(candidate.title)
-                .lineLimit(1)
-                .font(.system(size: 13))
-                .foregroundStyle(Color.white)
-        case .multiLine:
-            VStack(alignment: textColumnAlignment, spacing: -3) {
-                ForEach(Array(candidate.lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .lineLimit(1)
-                        .foregroundStyle(Color.white)
-                }
-            }
-            .font(.system(size: 11))
-        }
-    }
-
-    private var stackAlignment: Alignment {
-        switch textAlignment {
-        case .leading: .leading
-        case .center: .center
-        case .trailing: .trailing
-        }
-    }
-
-    private var textColumnAlignment: HorizontalAlignment {
-        switch textAlignment {
-        case .leading: .leading
-        case .center: .center
-        case .trailing: .trailing
-        }
-    }
-
-    private func activityLabel(_ activity: SessionActivity) -> String {
-        switch activity {
-        case .running: "运行中"
-        case .waiting: "等待输入"
-        case .completed: "已完成"
-        case .failed: "失败"
-        case .unknown: "暂无活动"
-        }
-    }
 }

@@ -92,7 +92,6 @@ final class AppState: ObservableObject {
     @Published private(set) var providerActivities: ProviderActivitySnapshot = .unknown
     @Published var displayMode: MenuBarDisplayMode = .iconOnly { didSet { persistSettings() } }
     @Published var menuBarLineMode: MenuBarLineMode = .multiLine { didSet { persistSettings() } }
-    @Published var menuBarTextAlignment: MenuBarTextAlignment = .leading { didSet { persistSettings() } }
     @Published private(set) var snapshots: [UsageSnapshotRecord] = []
     @Published private(set) var sessionEntries: [SessionIndexEntry] = []
     @Published private(set) var isIndexingSessions = false
@@ -233,7 +232,6 @@ final class AppState: ObservableObject {
         }
         self.displayMode = settings.displayMode
         self.menuBarLineMode = settings.menuBarLineMode
-        self.menuBarTextAlignment = settings.menuBarTextAlignment
         self.theme = settings.theme
         self.tokenHeatmapPeriod = settings.tokenHeatmapPeriod
         let launchStatus = launchAtLoginManager.status
@@ -1068,7 +1066,6 @@ final class AppState: ObservableObject {
     func updateSettings(_ settings: AppSettings) {
         displayMode = settings.displayMode
         menuBarLineMode = settings.menuBarLineMode
-        menuBarTextAlignment = settings.menuBarTextAlignment
         theme = settings.theme
         tokenHeatmapPeriod = settings.tokenHeatmapPeriod
         var mergedSettings = settings
@@ -1172,7 +1169,6 @@ final class AppState: ObservableObject {
         var settings = settingsStore.load()
         settings.displayMode = displayMode
         settings.menuBarLineMode = menuBarLineMode
-        settings.menuBarTextAlignment = menuBarTextAlignment
         settings.theme = theme
         settingsStore.save(settings)
     }

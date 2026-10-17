@@ -4,35 +4,39 @@ import XCTest
 @testable import CodexBar
 
 final class CodexBarTests: XCTestCase {
-    func testMenuBarStatusIndicatorHasNoOpaqueBackingRing() throws {
+    func testMenuBarStatusIconUsesTemplateMaskWithoutOpaqueBackingRing() throws {
         let source = NSImage(size: NSSize(width: 20, height: 20))
         source.lockFocus()
         NSGraphicsContext.current?.compositingOperation = .clear
         NSBezierPath(rect: NSRect(origin: .zero, size: source.size)).fill()
+        NSGraphicsContext.current?.compositingOperation = .sourceOver
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 12, height: 12)).fill()
         source.unlockFocus()
-        let image = MenuBarStatusIconComposer.composedImage(from: source, activity: .running)
+        let image = MenuBarStatusIconComposer.composedImage(from: source)
         let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
 
-        let visibleColors = (0..<representation.pixelsHigh).flatMap { y in
-            (0..<representation.pixelsWide).compactMap { x in
-                representation.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+        XCTAssertTrue(image.isTemplate)
+
+        let visiblePixelCount = (0..<representation.pixelsHigh).reduce(into: 0) { count, y in
+            for x in 0..<representation.pixelsWide {
+                if representation.colorAt(x: x, y: y)?.alphaComponent ?? 0 > 0.25 {
+                    count += 1
+                }
             }
-        }.filter { $0.alphaComponent > 0.25 }
-        XCTAssertFalse(visibleColors.isEmpty)
-        XCTAssertTrue(visibleColors.allSatisfy { color in
-            color.greenComponent > color.redComponent * 1.2
-                && color.greenComponent > color.blueComponent * 1.2
-        })
+        }
+        XCTAssertGreaterThan(visiblePixelCount, 0)
+        XCTAssertLessThan(visiblePixelCount, representation.pixelsWide * representation.pixelsHigh / 2)
     }
 
-    func testMenuBarStatusIconPreservesSourceColor() throws {
+    func testMenuBarStatusIconConvertsSourceToMonochromeMask() throws {
         let source = NSImage(size: NSSize(width: 20, height: 20))
         source.lockFocus()
         NSColor.systemBlue.setFill()
-        NSBezierPath(rect: NSRect(x: 3, y: 3, width: 12, height: 12)).fill()
+        NSBezierPath(rect: NSRect(x: 2, y: 2, width: 8, height: 16)).fill()
         source.unlockFocus()
 
-        let image = MenuBarStatusIconComposer.composedImage(from: source, activity: .completed)
+        let image = MenuBarStatusIconComposer.composedImage(from: source)
         let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         let visibleColors = (0..<representation.pixelsHigh).flatMap { y in
             (0..<representation.pixelsWide).compactMap { x in
@@ -40,10 +44,114 @@ final class CodexBarTests: XCTestCase {
             }
         }.filter { $0.alphaComponent > 0.25 }
 
-        XCTAssertTrue(visibleColors.contains { color in
-            color.blueComponent > color.redComponent * 1.2
-                && color.blueComponent > color.greenComponent * 1.2
+        XCTAssertFalse(visibleColors.isEmpty)
+        XCTAssertTrue(visibleColors.allSatisfy { color in
+            abs(color.redComponent - color.greenComponent) < 0.1
+                && abs(color.greenComponent - color.blueComponent) < 0.1
         })
+    }
+
+    func testMenuBarStatusIconClearsInternalCodexGlyph() throws {
+        let source = NSImage(size: NSSize(width: 20, height: 20))
+        source.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSBezierPath(rect: NSRect(x: 2, y: 2, width: 16, height: 16)).fill()
+        NSColor.white.setStroke()
+        let chevron = NSBezierPath()
+        chevron.move(to: NSPoint(x: 5, y: 13.4))
+        chevron.line(to: NSPoint(x: 7.8, y: 10))
+        chevron.line(to: NSPoint(x: 5, y: 6.6))
+        chevron.lineWidth = 2.2
+        chevron.lineCapStyle = .round
+        chevron.lineJoinStyle = .round
+        chevron.stroke()
+        NSColor.white.setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: 9.4, y: 6.6, width: 5.6, height: 2.5),
+            xRadius: 1.25,
+            yRadius: 1.25
+        ).fill()
+        source.unlockFocus()
+
+        let image = MenuBarStatusIconComposer.composedImage(
+            from: source,
+            removesInternalCodexGlyph: true
+        )
+        let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+
+        let alphaAtNormalizedPoint = { (x: CGFloat, y: CGFloat) in
+            representation.colorAt(
+                x: Int(x * CGFloat(representation.pixelsWide)),
+                y: Int(y * CGFloat(representation.pixelsHigh))
+            )?.alphaComponent ?? 0
+        }
+        let bodyPixelAlpha = alphaAtNormalizedPoint(0.2, 0.5)
+        let glyphPixelAlpha = alphaAtNormalizedPoint(0.4, 0.5)
+        XCTAssertGreaterThan(bodyPixelAlpha, 0.25)
+        XCTAssertLessThanOrEqual(glyphPixelAlpha, 0.25)
+    }
+
+    func testMenuBarStatusIndicatorUsesSemanticColorsAndHidesIdleState() {
+        XCTAssertEqual(MenuBarStatusIndicatorPalette.color(for: .running), .systemGreen)
+        XCTAssertEqual(MenuBarStatusIndicatorPalette.color(for: .waiting), .systemOrange)
+        XCTAssertEqual(MenuBarStatusIndicatorPalette.color(for: .failed), .systemRed)
+        XCTAssertNil(MenuBarStatusIndicatorPalette.color(for: .completed))
+        XCTAssertNil(MenuBarStatusIndicatorPalette.color(for: .unknown))
+    }
+
+    func testMenuBarStatusIndicatorKeepsAConsistentDistanceFromTheIcon() {
+        let frame = MenuBarStatusIndicatorLayout.frame(
+            for: NSRect(x: 10, y: 5, width: 20, height: 20)
+        )
+
+        XCTAssertEqual(frame.minX, 31)
+        XCTAssertEqual(frame.maxX, 37)
+        XCTAssertEqual(frame.midY, 15)
+    }
+
+    func testMenuBarUsesACompactImageTitleGap() {
+        XCTAssertEqual(MenuBarStatusItemLayout.imageTitleGap, 0.5)
+    }
+
+    func testMenuBarStatusTitleUsesFixedOfficialLabelAndValueColumns() {
+        let official = MenuBarProviderItem(
+            providerType: .officialCodex,
+            lines: [
+                "5h 98% · 10-17 16:10",
+                "W 59% · Thursday · 3 Resets"
+            ]
+        )
+        XCTAssertEqual(
+            MenuBarStatusTitleLayout.title(for: official, lineMode: .multiLine),
+            "\t5h\t98% · 10-17 16:10\n\tW\t59% · Thursday · 3 Resets"
+        )
+
+        let paragraphStyle = MenuBarStatusTitleLayout.paragraphStyle(
+            for: official,
+            lineMode: .multiLine
+        )
+        XCTAssertEqual(
+            paragraphStyle.tabStops.map { $0.alignment },
+            [.center, .left]
+        )
+        XCTAssertEqual(
+            paragraphStyle.tabStops.map { $0.location },
+            [MenuBarStatusTitleLayout.labelColumnWidth / 2, MenuBarStatusTitleLayout.valueColumnStart]
+        )
+
+        XCTAssertEqual(
+            MenuBarStatusTitleLayout.title(for: official, lineMode: .singleLine),
+            official.title
+        )
+
+        let thirdParty = MenuBarProviderItem(
+            providerType: .deepseek,
+            lines: ["¥7.16", "今日消费 ¥0.02"]
+        )
+        XCTAssertEqual(
+            MenuBarStatusTitleLayout.title(for: thirdParty, lineMode: .multiLine),
+            "¥7.16\n今日消费 ¥0.02"
+        )
     }
 
     func testCodexActivityParserReadsAllDeviceSummary() throws {
@@ -242,6 +350,33 @@ final class CodexBarTests: XCTestCase {
 
     func testDashboardContainsSevenStaticRoutes() {
         XCTAssertEqual(DashboardRoute.allCases.count, 7)
+    }
+
+    func testClosingDashboardDoesNotTerminateApplication() {
+        let delegate = CodexBarApplicationDelegate()
+
+        XCTAssertFalse(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+    }
+
+    func testMenuBarPopoverDismissesOnlyForOutsideClicks() {
+        XCTAssertFalse(
+            MenuBarPopoverClickPolicy.shouldDismiss(
+                isInsidePopover: true,
+                isInsideStatusItem: false
+            )
+        )
+        XCTAssertFalse(
+            MenuBarPopoverClickPolicy.shouldDismiss(
+                isInsidePopover: false,
+                isInsideStatusItem: true
+            )
+        )
+        XCTAssertTrue(
+            MenuBarPopoverClickPolicy.shouldDismiss(
+                isInsidePopover: false,
+                isInsideStatusItem: false
+            )
+        )
     }
 
     func testProviderEnableToggleAllowsDisablingButBlocksEnablingDuringCredentialTest() {
@@ -668,7 +803,6 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(MenuBarDisplayMode.compact.thirdPartySummary, "图标 + 两行核心指标")
         XCTAssertEqual(MenuBarDisplayMode.iconOnly.thirdPartySummary, "仅显示图标")
         XCTAssertEqual(MenuBarLineMode.allCases.map(\.title), ["单行", "多行"])
-        XCTAssertEqual(MenuBarTextAlignment.allCases.map(\.title), ["左对齐", "居中对齐", "右对齐"])
     }
 
     func testMenuBarProviderItemsKeepProviderIconAndTitlePaired() {
@@ -2423,6 +2557,66 @@ final class CodexBarTests: XCTestCase {
         XCTAssertFalse(activities.isSimultaneouslyConsuming)
     }
 
+    func testHookFallbackIgnoresStaleRunningSessions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let now = Date(timeIntervalSince1970: 1_786_260_000)
+        let statusFile = root.appendingPathComponent("session-status.json")
+        let payload: [String: Any] = [
+            "state": "running",
+            "updated_at": now.timeIntervalSince1970,
+            "sessions": [
+                "stale-session": [
+                    "state": "running",
+                    "updated_at": now.timeIntervalSince1970 - 181
+                ]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: statusFile)
+
+        let activities = SessionActivitySource(
+            roots: [],
+            now: { now },
+            liveEventWindow: 180,
+            hookStatusFile: statusFile
+        ).liveActivities()
+
+        XCTAssertEqual(activities.officialCodex, .unknown)
+        XCTAssertNil(MenuBarStatusIndicatorPalette.color(for: activities.officialCodex))
+    }
+
+    func testHookFallbackKeepsFreshRunningSessionActive() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let now = Date(timeIntervalSince1970: 1_786_260_000)
+        let statusFile = root.appendingPathComponent("session-status.json")
+        let payload: [String: Any] = [
+            "state": "running",
+            "updated_at": now.timeIntervalSince1970,
+            "sessions": [
+                "fresh-session": [
+                    "state": "running",
+                    "updated_at": now.timeIntervalSince1970 - 5
+                ]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: statusFile)
+
+        let activities = SessionActivitySource(
+            roots: [],
+            now: { now },
+            liveEventWindow: 180,
+            hookStatusFile: statusFile
+        ).liveActivities()
+
+        XCTAssertEqual(activities.officialCodex, .running)
+        XCTAssertEqual(MenuBarStatusIndicatorPalette.color(for: activities.officialCodex), .systemGreen)
+    }
+
     func testProviderActivitySourceScansCurrentDateDirectoryWithoutRecursingUnrelatedTrees() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2661,8 +2855,7 @@ final class CodexBarTests: XCTestCase {
             sessionIndexEnabled: false,
             pluginSkillIndexEnabled: true,
             tokenHeatmapPeriod: .threeMonths,
-            menuBarLineMode: .singleLine,
-            menuBarTextAlignment: .trailing
+            menuBarLineMode: .singleLine
         )
 
         store.save(settings)

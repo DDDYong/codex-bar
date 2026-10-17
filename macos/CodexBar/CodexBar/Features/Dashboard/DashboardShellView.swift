@@ -126,14 +126,19 @@ private extension NSImage {
 }
 
 struct DashboardShellView: View {
+    let onClose: () -> Void
     @EnvironmentObject private var appState: AppState
+
+    init(onClose: @escaping () -> Void = {}) {
+        self.onClose = onClose
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             DashboardSidebar(selection: $appState.selectedRoute, theme: $appState.theme)
                 .frame(width: 220)
             VStack(spacing: 0) {
-                DashboardHeader(route: appState.selectedRoute)
+                DashboardHeader(route: appState.selectedRoute, onClose: onClose)
                 Group {
                     if appState.selectedRoute == .dashboard { DashboardHomeView() }
                     else if appState.selectedRoute == .usage { UsageContentView(route: appState.selectedRoute) }
@@ -1488,6 +1493,7 @@ private struct DashboardSidebar: View {
 
 private struct DashboardHeader: View {
     let route: DashboardRoute
+    let onClose: () -> Void
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
@@ -1516,9 +1522,7 @@ private struct DashboardHeader: View {
 
             Spacer()
 
-            headerButton(systemImage: "power", help: "退出 CodexBar", isSubtle: true) {
-                NSApplication.shared.terminate(nil)
-            }
+            headerButton(systemImage: "xmark", help: "关闭仪表盘", isSubtle: true, action: onClose)
             headerButton(systemImage: "arrow.clockwise", help: "立即刷新额度数据") {
                 appState.refresh()
             }
