@@ -104,8 +104,8 @@ final class CodexBarTests: XCTestCase {
             for: NSRect(x: 10, y: 5, width: 20, height: 20)
         )
 
-        XCTAssertEqual(frame.minX, 31)
-        XCTAssertEqual(frame.maxX, 37)
+        XCTAssertEqual(frame.minX, 30)
+        XCTAssertEqual(frame.maxX, 36)
         XCTAssertEqual(frame.midY, 15)
     }
 

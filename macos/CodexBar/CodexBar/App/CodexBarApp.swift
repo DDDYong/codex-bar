@@ -143,7 +143,7 @@ enum MenuBarStatusIndicatorPalette {
 
 enum MenuBarStatusIndicatorLayout {
     static let diameter: CGFloat = 6
-    static let iconTrailingGap: CGFloat = 4
+    static let iconTrailingGap: CGFloat = 3
 
     static func frame(for imageRect: NSRect) -> NSRect {
         guard imageRect.width > 0, imageRect.height > 0 else { return .zero }
