@@ -115,7 +115,7 @@ final class CodexBarTests: XCTestCase {
             MenuBarStatusItemLayout.singleLineImageTitleGap,
             MenuBarStatusIndicatorLayout.diameter + MenuBarStatusItemLayout.imageTitleGap
         )
-        XCTAssertEqual(MenuBarStatusItemLayout.outerPadding, 4)
+        XCTAssertEqual(MenuBarStatusItemLayout.outerPadding, 2)
     }
 
     func testMenuBarButtonCellUsesTheConfiguredImageTitleGapForBothLineModes() {

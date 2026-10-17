@@ -262,7 +262,7 @@ enum MenuBarStatusItemLayout {
     static let singleLineImageTitleGap: CGFloat =
         MenuBarStatusIndicatorLayout.diameter + imageTitleGap
     static let multiLineTitleVerticalOffset: CGFloat = 2
-    static let outerPadding: CGFloat = 4
+    static let outerPadding: CGFloat = 2
 
     static func imageTitleGap(forSingleLine: Bool) -> CGFloat {
         forSingleLine ? singleLineImageTitleGap : imageTitleGap
