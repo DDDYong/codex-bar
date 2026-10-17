@@ -115,6 +115,19 @@ struct CodexAccount: Equatable {
     let displayName: String?
     let email: String?
     let accountID: String?
+    let plan: String?
+
+    init(
+        displayName: String?,
+        email: String?,
+        accountID: String?,
+        plan: String? = nil
+    ) {
+        self.displayName = displayName
+        self.email = email
+        self.accountID = accountID
+        self.plan = plan
+    }
 
     var initials: String {
         let source = displayName ?? email ?? "C"

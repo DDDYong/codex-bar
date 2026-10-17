@@ -111,20 +111,80 @@ final class CodexBarTests: XCTestCase {
 
     func testMenuBarUsesACompactImageTitleGap() {
         XCTAssertEqual(MenuBarStatusItemLayout.imageTitleGap, 1)
+        XCTAssertEqual(
+            MenuBarStatusItemLayout.singleLineImageTitleGap,
+            MenuBarStatusIndicatorLayout.diameter + MenuBarStatusItemLayout.imageTitleGap
+        )
+        XCTAssertEqual(MenuBarStatusItemLayout.outerPadding, 4)
     }
 
-    func testMenuBarButtonCellUsesTheConfiguredImageTitleGap() {
+    func testMenuBarButtonCellUsesTheConfiguredImageTitleGapForBothLineModes() {
         let cell = MenuBarStatusButtonCell(textCell: "5h 98%")
         cell.image = NSImage(size: NSSize(width: 20, height: 20))
         cell.imagePosition = .imageLeft
 
         let bounds = NSRect(x: 0, y: 0, width: 160, height: 24)
         let imageRect = cell.imageRect(forBounds: bounds)
+
+        XCTAssertEqual(imageRect.minX, MenuBarStatusItemLayout.outerPadding, accuracy: 0.001)
+
+        cell.usesSingleLineMode = false
         let titleRect = cell.titleRect(forBounds: bounds)
 
         XCTAssertEqual(
             titleRect.minX - imageRect.maxX,
             MenuBarStatusItemLayout.imageTitleGap,
+            accuracy: 0.001
+        )
+
+        cell.usesSingleLineMode = true
+        let singleLineTitleRect = cell.titleRect(forBounds: bounds)
+        XCTAssertEqual(
+            singleLineTitleRect.minX - imageRect.maxX,
+            MenuBarStatusItemLayout.singleLineImageTitleGap,
+            accuracy: 0.001
+        )
+    }
+
+    func testMenuBarSingleLineTitleRectCanFitTheMeasuredTitle() {
+        let title = NSAttributedString(
+            string: "5h 42% · 10-17 16:10 · W 50% · Thursday · 3 Resets",
+            attributes: [.font: NSFont.systemFont(ofSize: 13)]
+        )
+        let textWidth = ceil(
+            title.boundingRect(
+                with: NSSize(width: 4096, height: 4096),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).width
+        )
+        let cell = MenuBarStatusButtonCell(textCell: "")
+        cell.attributedTitle = title
+        cell.image = NSImage(size: NSSize(width: 20, height: 20))
+        cell.imagePosition = .imageLeft
+        cell.alignment = .left
+        cell.usesSingleLineMode = true
+
+        let imageRect = cell.imageRect(
+            forBounds: NSRect(x: 0, y: 0, width: 4096, height: 24)
+        )
+        let width = ceil(
+            textWidth
+                + imageRect.maxX
+                + MenuBarStatusItemLayout.singleLineImageTitleGap
+                + MenuBarStatusItemLayout.outerPadding
+        )
+        let titleRect = cell.titleRect(
+            forBounds: NSRect(x: 0, y: 0, width: width, height: 24)
+        )
+
+        XCTAssertGreaterThanOrEqual(
+            titleRect.width,
+            textWidth,
+            "titleRect width \(titleRect.width) is smaller than measured title width \(textWidth)"
+        )
+        XCTAssertEqual(
+            titleRect.maxX,
+            width - MenuBarStatusItemLayout.outerPadding,
             accuracy: 0.001
         )
     }
@@ -583,6 +643,39 @@ final class CodexBarTests: XCTestCase {
 
         XCTAssertEqual(auth.account.displayName, "Alice Codex")
         XCTAssertEqual(auth.account.email, "alice@example.com")
+    }
+
+    func testAuthResolverExtractsNamespacedChatGPTAccountPresentationAndPlan() throws {
+        let accessToken = try makeJWTToken(claims: [
+            "https://api.openai.com/auth": [
+                "chatgpt_account_id": "acct_nested",
+                "chatgpt_plan_type": "plus"
+            ],
+            "https://api.openai.com/profile": [
+                "name": "Duanyang",
+                "email": "duanyang@example.com"
+            ]
+        ])
+        let idToken = try makeJWTToken(claims: [
+            "name": "Duanyang",
+            "email": "duanyang@example.com",
+            "https://api.openai.com/auth": [
+                "chatgpt_plan_type": "plus"
+            ]
+        ])
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "tokens": [
+                "access_token": accessToken,
+                "id_token": idToken
+            ]
+        ])
+
+        let auth = try CodexUsageSource.parseAuth(from: payload)
+
+        XCTAssertEqual(auth.account.displayName, "Duanyang")
+        XCTAssertEqual(auth.account.email, "duanyang@example.com")
+        XCTAssertEqual(auth.accountID, "acct_nested")
+        XCTAssertEqual(auth.account.plan, "PLUS")
     }
 
     func testMenuBarDisplayModesExcludeSessionStatusFromTitle() {
@@ -2633,6 +2726,38 @@ final class CodexBarTests: XCTestCase {
         XCTAssertEqual(MenuBarStatusIndicatorPalette.color(for: activities.officialCodex), .systemGreen)
     }
 
+    func testHookFallbackKeepsRunningSessionActiveAlongsideRecentCompletedFile() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let now = Date(timeIntervalSince1970: 1_786_260_000)
+        let completedSession = root.appendingPathComponent("completed.jsonl")
+        try writeSessionEvents([
+            ["type": "session_meta", "payload": ["model_provider": "openai"]],
+            ["type": "event_msg", "payload": ["type": "task_complete"]]
+        ], to: completedSession, modifiedAt: now)
+
+        let statusFile = root.appendingPathComponent("session-status.json")
+        let payload: [String: Any] = [
+            "sessions": [
+                "fresh-session": [
+                    "state": "running",
+                    "updated_at": now.timeIntervalSince1970 - 5
+                ]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: payload).write(to: statusFile)
+
+        let activities = SessionActivitySource(
+            roots: [.init(url: root, providerHint: nil)],
+            now: { now },
+            hookStatusFile: statusFile
+        ).liveActivities()
+
+        XCTAssertEqual(activities.officialCodex, .running)
+    }
+
     func testProviderActivitySourceScansCurrentDateDirectoryWithoutRecursingUnrelatedTrees() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3608,6 +3733,15 @@ final class CodexBarTests: XCTestCase {
             }
         }
     }
+}
+
+private func makeJWTToken(claims: [String: Any]) throws -> String {
+    let data = try JSONSerialization.data(withJSONObject: claims, options: [.sortedKeys])
+    let payload = data.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+    return "header.\(payload).signature"
 }
 
 private struct StubSessionActivitySource: SessionActivityReading {

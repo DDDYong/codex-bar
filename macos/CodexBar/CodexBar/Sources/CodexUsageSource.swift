@@ -289,15 +289,42 @@ final class CodexUsageSource {
         guard let accessToken = stringValue(tokens, keys: ["access_token", "accessToken"]), !accessToken.isEmpty else {
             throw CodexUsageError.signedOut
         }
-        let claims = jwtClaims(from: accessToken)
-        let accountID = safePresentationString(stringValue(tokens, keys: ["account_id", "accountId"]) ?? accountID(from: claims))
+        let accessTokenClaims = jwtClaims(from: accessToken)
+        let idTokenClaims = stringValue(tokens, keys: ["id_token", "idToken"]).map(jwtClaims) ?? [:]
+        let accountID = firstPresentationString([
+            stringValue(tokens, keys: ["account_id", "accountId"]),
+            accountID(from: accessTokenClaims),
+            accountID(from: idTokenClaims)
+        ])
         return CodexAuth(
             accessToken: accessToken,
             accountID: accountID,
             account: CodexAccount(
-                displayName: safePresentationString(stringValue(root, keys: ["name", "display_name", "displayName"]) ?? stringValue(tokens, keys: ["name", "display_name", "displayName"]) ?? stringValue(claims, keys: ["name", "preferred_username"])),
-                email: safeEmail(stringValue(root, keys: ["email"]) ?? stringValue(tokens, keys: ["email"]) ?? stringValue(claims, keys: ["email"])),
-                accountID: accountID
+                displayName: firstPresentationString([
+                    stringValue(root, keys: ["name", "display_name", "displayName"]),
+                    stringValue(tokens, keys: ["name", "display_name", "displayName"]),
+                    stringValue(accessTokenClaims, keys: ["name", "preferred_username"]),
+                    namespacedStringValue(accessTokenClaims, namespace: openAIProfileNamespace, keys: ["name", "display_name", "displayName"]),
+                    stringValue(idTokenClaims, keys: ["name", "preferred_username"]),
+                    namespacedStringValue(idTokenClaims, namespace: openAIProfileNamespace, keys: ["name", "display_name", "displayName"])
+                ]),
+                email: firstEmail([
+                    stringValue(root, keys: ["email"]),
+                    stringValue(tokens, keys: ["email"]),
+                    stringValue(accessTokenClaims, keys: ["email"]),
+                    namespacedStringValue(accessTokenClaims, namespace: openAIProfileNamespace, keys: ["email"]),
+                    stringValue(idTokenClaims, keys: ["email"]),
+                    namespacedStringValue(idTokenClaims, namespace: openAIProfileNamespace, keys: ["email"])
+                ]),
+                accountID: accountID,
+                plan: normalizedPlan(firstPresentationString([
+                    stringValue(root, keys: ["plan_type", "planType"]),
+                    stringValue(tokens, keys: ["plan_type", "planType"]),
+                    stringValue(accessTokenClaims, keys: ["plan_type", "planType"]),
+                    namespacedStringValue(accessTokenClaims, namespace: openAIAuthNamespace, keys: ["chatgpt_plan_type", "plan_type", "planType"]),
+                    stringValue(idTokenClaims, keys: ["plan_type", "planType"]),
+                    namespacedStringValue(idTokenClaims, namespace: openAIAuthNamespace, keys: ["chatgpt_plan_type", "plan_type", "planType"])
+                ]))
             )
         )
     }
@@ -526,8 +553,35 @@ final class CodexUsageSource {
             || (!key.localizedCaseInsensitiveContains("percent") && !key.localizedCaseInsensitiveContains("pct") && value <= 1)
     }
 
+    private static let openAIAuthNamespace = "https://api.openai.com/auth"
+    private static let openAIProfileNamespace = "https://api.openai.com/profile"
+
     private static func accountID(from object: [String: Any]) -> String? {
-        stringValue(object, keys: ["https://api.openai.com/auth.chatgpt_account_id", "chatgpt_account_id"])
+        firstPresentationString([
+            stringValue(object, keys: ["https://api.openai.com/auth.chatgpt_account_id", "chatgpt_account_id"]),
+            namespacedStringValue(object, namespace: openAIAuthNamespace, keys: ["chatgpt_account_id", "account_id", "accountId"])
+        ])
+    }
+
+    private static func namespacedStringValue(
+        _ object: [String: Any],
+        namespace: String,
+        keys: [String]
+    ) -> String? {
+        guard let namespaceObject = object[namespace] as? [String: Any] else { return nil }
+        return stringValue(namespaceObject, keys: keys)
+    }
+
+    private static func firstPresentationString(_ values: [String?]) -> String? {
+        values.lazy.compactMap { safePresentationString($0) }.first
+    }
+
+    private static func firstEmail(_ values: [String?]) -> String? {
+        values.lazy.compactMap { safeEmail($0) }.first
+    }
+
+    private static func normalizedPlan(_ value: String?) -> String? {
+        safePresentationString(value)?.uppercased()
     }
 
     private static func jwtClaims(from token: String) -> [String: Any] {

@@ -77,8 +77,12 @@ final class SessionActivitySource: SessionActivityReading {
         }
         pruneCache(keeping: visitedPaths)
 
+        let hookActivity = hookFallbackActivity(observedAt: observedAt)
+        if hookActivity != .unknown {
+            statusesByProvider[.officialCodex, default: []].append(hookActivity)
+        }
         if statusesByProvider.isEmpty {
-            statusesByProvider[.officialCodex] = [hookFallbackActivity(observedAt: observedAt)]
+            statusesByProvider[.officialCodex] = [.unknown]
         }
 
         return ProviderActivitySnapshot(

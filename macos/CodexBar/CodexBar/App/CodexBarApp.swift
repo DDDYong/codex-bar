@@ -259,11 +259,29 @@ enum MenuBarStatusTitleLayout {
 
 enum MenuBarStatusItemLayout {
     static let imageTitleGap: CGFloat = 1
+    static let singleLineImageTitleGap: CGFloat =
+        MenuBarStatusIndicatorLayout.diameter + imageTitleGap
     static let multiLineTitleVerticalOffset: CGFloat = 2
-    static let trailingPadding: CGFloat = 4
+    static let outerPadding: CGFloat = 4
+
+    static func imageTitleGap(forSingleLine: Bool) -> CGFloat {
+        forSingleLine ? singleLineImageTitleGap : imageTitleGap
+    }
 }
 
 final class MenuBarStatusButtonCell: NSButtonCell {
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        var imageRect = super.imageRect(forBounds: rect)
+        guard imagePosition == .imageLeft,
+              imageRect.width > 0 else {
+            return imageRect
+        }
+
+        let leadingInset = imageRect.minX - rect.minX
+        imageRect.origin.x += MenuBarStatusItemLayout.outerPadding - leadingInset
+        return imageRect
+    }
+
     override func titleRect(forBounds rect: NSRect) -> NSRect {
         var titleRect = super.titleRect(forBounds: rect)
         guard image != nil,
@@ -272,11 +290,16 @@ final class MenuBarStatusButtonCell: NSButtonCell {
             return titleRect
         }
 
-        let imageRect = super.imageRect(forBounds: rect)
+        let imageRect = imageRect(forBounds: rect)
         let currentGap = titleRect.minX - imageRect.maxX
-        let adjustment = MenuBarStatusItemLayout.imageTitleGap - currentGap
+        let adjustment = MenuBarStatusItemLayout.imageTitleGap(
+            forSingleLine: usesSingleLineMode
+        ) - currentGap
         titleRect.origin.x += adjustment
-        titleRect.size.width = max(0, titleRect.width - adjustment)
+        titleRect.size.width = max(
+            0,
+            rect.maxX - MenuBarStatusItemLayout.outerPadding - titleRect.minX
+        )
 
         return titleRect
     }
@@ -375,6 +398,10 @@ private final class MenuBarController: NSObject, ObservableObject {
     private var stateCancellable: AnyCancellable?
     private var outsideClickMonitors: [Any] = []
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     init(appState: AppState, isEnabled: Bool) {
         self.appState = appState
         self.isEnabled = isEnabled
@@ -394,6 +421,12 @@ private final class MenuBarController: NSObject, ObservableObject {
         button.image = nil
         button.isBordered = false
         button.focusRingType = .none
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(statusBarWindowDidMove(_:)),
+            name: NSWindow.didMoveNotification,
+            object: nil
+        )
         button.target = self
         button.action = #selector(handleStatusItemClick(_:))
         let indicatorView = MenuBarStatusIndicatorView(frame: .zero)
@@ -401,7 +434,10 @@ private final class MenuBarController: NSObject, ObservableObject {
         statusIndicatorView = indicatorView
 
         popover.behavior = .transient
-        popover.animates = true
+        // The status item can change width while the popover is open. Disable
+        // transition animations so the anchor follows the new button geometry
+        // immediately instead of visibly passing through the old position.
+        popover.animates = false
         popover.delegate = self
         popover.contentViewController = NSHostingController(
             rootView: MenuBarPopoverRoot(
@@ -452,14 +488,59 @@ private final class MenuBarController: NSObject, ObservableObject {
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         let textWidth = hasText ? ceil(bounds.width) : 0
-        let imageWidth = image == nil ? 0 : 20
-        let imageGap = image != nil && hasText ? MenuBarStatusItemLayout.imageTitleGap : 0
+        let imageWidth: CGFloat
+        if image == nil {
+            imageWidth = 0
+        } else if hasText, let cell = button.cell {
+            let probeBounds = NSRect(
+                x: 0,
+                y: 0,
+                width: 4096,
+                height: max(button.bounds.height, 24)
+            )
+            imageWidth = max(0, cell.imageRect(forBounds: probeBounds).maxX)
+        } else {
+            imageWidth = 20
+        }
+        let imageGap = image != nil && hasText
+            ? MenuBarStatusItemLayout.imageTitleGap(forSingleLine: lineMode == .singleLine)
+            : 0
         let width = max(
             24,
-            ceil(textWidth + CGFloat(imageWidth) + imageGap + MenuBarStatusItemLayout.trailingPadding)
+            ceil(textWidth + imageWidth + imageGap + MenuBarStatusItemLayout.outerPadding)
         )
         statusItem.length = width
         updateStatusIndicator(for: item.activity)
+    }
+
+    @objc private func statusBarWindowDidMove(_ notification: Notification) {
+        guard let statusWindow = statusButton?.window,
+              let movedWindow = notification.object as? NSWindow,
+              movedWindow === statusWindow else {
+            return
+        }
+
+        // AppKit posts didMove while committing the status-bar window's
+        // transaction. Defer the popover update to the next run-loop turn so
+        // re-showing it does not start a nested Core Animation transaction.
+        DispatchQueue.main.async { [weak self] in
+            self?.repositionPopoverIfNeeded()
+        }
+    }
+
+    private func repositionPopoverIfNeeded() {
+        guard popover.isShown, let button = statusButton else { return }
+
+        button.superview?.layoutSubtreeIfNeeded()
+        button.window?.layoutIfNeeded()
+        // Calling show again is the supported way to update an already shown
+        // popover's anchor. Setting positioningRect alone can leave the
+        // window at its previous screen position until a later AppKit pass.
+        popover.show(
+            relativeTo: button.bounds,
+            of: button,
+            preferredEdge: .minY
+        )
     }
 
     private func nativeStatusTitle(for item: MenuBarProviderItem) -> NSAttributedString {
